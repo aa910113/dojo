@@ -1,13 +1,22 @@
 # Git 分支規則
 
-## 分支模型
+## 三層分支模型
 
-| 類型 | 分支 | 角色 |
-|---|---|---|
-| 長期 | `main` | 正式環境,永遠保持「可上線」狀態。Vercel 跟著 `main` 自動部署到正式站。 |
-| 短期 | `feat/*`、`fix/*`、`chore/*` | 開發單一功能或修一個 bug,做完合併進 `main` 後刪除。 |
+```
+feat/xxx  ──merge──►  dev  ──merge──►  main
+(開發)              (測試站)          (正式站)
+```
 
-**核心規則：不直接在 `main` 上開發。** 所有變更都先在短期分支完成、驗證,再合併。
+| 類型 | 分支 | 部署到 | 角色 |
+|---|---|---|---|
+| 長期 | `main` | 正式站 `dojo-three-alpha.vercel.app` | 真實使用者使用,永遠保持穩定可上線 |
+| 長期 | `dev` | Vercel staging 網址 | 功能整合測試站,功能先在這驗證 |
+| 短期 | `feat/*`、`fix/*`、`chore/*` | 各自 preview 網址 | 開發單一功能或修一個 bug,合併後刪除 |
+
+**核心規則:**
+- 不直接在 `main` 或 `dev` 上開發,所有變更都在短期分支完成
+- 短期分支從 `dev` 開出,完成後合併回 `dev`
+- 在 `dev`(staging)整合測試確認後,才把 `dev` 合併進 `main` 發布到正式站
 
 ## 分支命名
 
@@ -18,29 +27,40 @@
 ## 標準流程
 
 ```
-git switch -c feat/xxx          # 從 main 開短期分支
-# ...開發 + commit...
-git push -u origin feat/xxx     # push → Vercel 自動建 preview 網址
-# 在 preview 網址測試
-# GitHub 開 PR → 確認 preview OK → 合併進 main
-git switch main && git pull     # 同步合併後的 main
-git branch -d feat/xxx          # 刪掉本機短期分支
+# 1. 從 dev 開短期分支
+git switch dev && git pull
+git switch -c feat/xxx
+
+# 2. 開發 + commit,然後 push
+git push -u origin feat/xxx
+#    → Vercel 自動建 preview 網址,可單獨測這個功能
+
+# 3. 開 PR:base 設 dev ← compare 設 feat/xxx
+#    確認 preview OK → 合併進 dev
+
+# 4. 同步並刪掉短期分支
+git switch dev && git pull
+git branch -d feat/xxx
+
+# 5. 發布:在 dev(staging)整合測試 OK 後,開 PR 把 dev 合併進 main
+#    → main 更新 → 正式站部署
 ```
 
 ## 合併方式
 
-優先用 **PR(Pull Request)**,即使單人開發:
-- 每個分支 push 後,Vercel 自動產生 preview 部署,可在合併前實測
+一律用 **PR(Pull Request)**,即使單人開發:
+- 每個分支 push 後 Vercel 自動產生部署,合併前可實測
 - PR 留下變更紀錄,日後可回顧
-- 合併到 `main` 才會觸發正式站更新
+- `feat/*` 的 PR base 是 `dev`;發布用的 PR base 是 `main`、compare 是 `dev`
 
 ## 環境對應
 
-- `main` → 正式站 `https://dojo-three-alpha.vercel.app/`
-- 其他分支 → Vercel 各自的 preview 網址(不影響正式站)
+- `main` → 正式站 `https://dojo-three-alpha.vercel.app/`(真實使用者)
+- `dev` → Vercel staging 網址(整合測試)
+- 其他短期分支 → Vercel 各自 preview 網址(不影響正式站與 staging)
 
 ## 注意
 
-- `main` 必須隨時可上線 —— 沒測過、會壞的東西不要進 `main`
-- 短期分支保持「短」:一個分支只做一件事,做完就合併刪除,不要長期累積
+- `main` 必須隨時可上線 —— 只接受從 `dev` 來、已在 staging 驗證過的變更
+- 短期分支保持「短」:一個分支只做一件事,做完合併刪除
 - 危險操作(force push、reset --hard、刪遠端分支)動手前先確認

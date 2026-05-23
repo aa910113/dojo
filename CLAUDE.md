@@ -5,7 +5,8 @@
 
 ## 部署
 
-- 推送到 `main` → Vercel 自動部署到正式站 `https://dojo-three-alpha.vercel.app/`
+- `main` → Vercel 正式站 `https://dojo-three-alpha.vercel.app/`(真實使用者)
+- `dev` → Vercel staging 網址(整合測試,發布前在此驗證)
 - GitHub:`aa910113/dojo`(SSH push 用 `github-personal` 別名)
 
 ## Git 工作流程
