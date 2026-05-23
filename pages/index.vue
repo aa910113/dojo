@@ -104,6 +104,7 @@ const feedback = ref<'idle' | 'good' | 'bad' | 'revealed'>('idle')
 const firstTry = ref(true)
 const wrongCount = ref(0)
 const showAnswer = ref(false)
+const locked = ref(false)
 const inputEl = ref<HTMLInputElement | null>(null)
 const showSettings = ref(false)
 const showHistory = ref(false)
@@ -123,6 +124,7 @@ function next() {
   firstTry.value = true
   wrongCount.value = 0
   showAnswer.value = false
+  locked.value = false
   nextTick(() => {
     inputEl.value?.focus()
     if (!current.value) return
@@ -135,7 +137,7 @@ function next() {
 }
 
 function checkAnswer(value: string) {
-  if (!current.value) return
+  if (!current.value || locked.value) return
   const cleaned = value.trim().toLowerCase()
   if (!cleaned) return
   const accepts = current.value.accepts
@@ -145,6 +147,7 @@ function checkAnswer(value: string) {
   if (inQuiz.value) {
     if (exact) {
       feedback.value = 'good'
+      locked.value = true
       quizAnswer(current.value.id, true)
       setTimeout(() => nextQuizCard(), 400)
       return
@@ -152,11 +155,13 @@ function checkAnswer(value: string) {
     const longest = Math.max(...accepts.map((a) => a.length))
     if (!partialMatch || cleaned.length >= longest) {
       feedback.value = 'bad'
+      locked.value = true
       const result = quizAnswer(current.value.id, false)
       if (result === 'retry') {
         setTimeout(() => {
           input.value = ''
           feedback.value = 'idle'
+          locked.value = false
           inputEl.value?.focus()
         }, 600)
       } else {
@@ -168,6 +173,7 @@ function checkAnswer(value: string) {
 
   if (exact) {
     feedback.value = 'good'
+    locked.value = true
     review(current.value.id, true, firstTry.value)
     if (firstTry.value) sessionCorrect.value += 1
     if (settings.value.autoPlaySound) speak(current.value.char)
@@ -187,9 +193,11 @@ function checkAnswer(value: string) {
       reveal()
       return
     }
+    locked.value = true
     setTimeout(() => {
       input.value = ''
       feedback.value = 'idle'
+      locked.value = false
       inputEl.value?.focus()
     }, 500)
   }
@@ -199,6 +207,7 @@ function reveal() {
   if (!current.value) return
   showAnswer.value = true
   feedback.value = 'revealed'
+  locked.value = true
   if (wrongCount.value === 0) {
     firstTry.value = false
     sessionWrong.value += 1
@@ -231,6 +240,7 @@ function nextQuizCard() {
   firstTry.value = true
   wrongCount.value = 0
   showAnswer.value = false
+  locked.value = false
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -824,7 +834,6 @@ const examCountdown = computed(() => {
             autocorrect="off"
             spellcheck="false"
             placeholder="輸入羅馬字"
-            :disabled="feedback === 'good' || feedback === 'bad'"
             @keydown.enter.prevent="checkAnswer(input)"
           />
           <div class="hint-row">
@@ -914,7 +923,6 @@ const examCountdown = computed(() => {
             autocorrect="off"
             spellcheck="false"
             placeholder="輸入羅馬字"
-            :disabled="feedback === 'good'"
             @keydown.enter.prevent="checkAnswer(input)"
           />
           <div class="hint-row">
