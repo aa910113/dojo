@@ -44,7 +44,16 @@ git branch -d feat/xxx
 
 # 5. 發布:在 dev(staging)整合測試 OK 後,開 PR 把 dev 合併進 main
 #    → main 更新 → 正式站部署
+
+# 6. 發布後收尾:把 dev 快轉對齊 main(必做)
+git switch main && git pull
+git switch dev && git merge --ff-only main && git push origin dev
 ```
+
+## 兩個容易踩的雷
+
+1. **開 `feat/*`、`fix/*` 的 PR 時,base 預設是 `main`,務必手動改成 `dev`。** 直接合進 main 會讓 dev 落後、違反「dev ≥ main」。
+2. **每次 `dev → main` 發布後,PR 會在 main 產生一個 merge commit,dev 沒有 → main 比 dev 多一個 commit。** 所以發布後一定要做上面第 6 步把 dev 快轉對齊 main,否則兩邊會持續分岔。
 
 ## 合併方式
 
