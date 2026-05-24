@@ -4,6 +4,27 @@ import { ALL_KANA } from '~/data/kana'
 
 const { settings, stats, updateSettings, pickNext, review, addStudySeconds, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, quiz, startQuiz, quizPickNext, quizAnswer, quizSkip, endQuiz, relearnTodayCards, relearnLaterCards, resetSessionLapses, importPersist } = useSRS()
 
+const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync } = useCloudSync()
+
+const syncLabel = computed(() => {
+  switch (syncStatus.value) {
+    case 'syncing': return '同步中…'
+    case 'synced': return '已同步'
+    case 'error': return '同步錯誤'
+    default: return ''
+  }
+})
+
+async function onAccountClick() {
+  if (cloudUser.value) {
+    if (confirm(`目前登入:${cloudUser.value.email}\n要登出嗎?(本機進度會保留)`)) {
+      await cloudSignOut()
+    }
+  } else {
+    await signInWithGoogle()
+  }
+}
+
 const importInputEl = ref<HTMLInputElement | null>(null)
 
 function triggerImport() {
@@ -346,6 +367,7 @@ let speechKeepAlive: number | null = null
 
 onMounted(() => {
   loadVoice()
+  initCloudSync()
   // 請求持久化儲存,降低 iOS/瀏覽器在空間吃緊時清掉 localStorage 的機率
   navigator.storage?.persist?.().catch(() => {})
   if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -536,6 +558,12 @@ const examCountdown = computed(() => {
           @click="showSettings = !showSettings; if (showSettings) showHistory = false"
           title="設定"
         >⚙</button>
+        <button
+          class="btn-icon account-btn"
+          :class="{ 'signed-in': cloudUser }"
+          @click="onAccountClick"
+          :title="cloudUser ? `${cloudUser.email} · ${syncLabel}` : '用 Google 登入以雲端同步'"
+        >{{ cloudUser ? '☁︎' : '登入' }}</button>
       </div>
     </header>
 
@@ -1001,6 +1029,15 @@ const examCountdown = computed(() => {
 }
 .btn-icon:hover {
   background: var(--panel-2);
+}
+.account-btn {
+  width: auto;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.account-btn.signed-in {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .panel {
