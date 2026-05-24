@@ -346,6 +346,8 @@ let speechKeepAlive: number | null = null
 
 onMounted(() => {
   loadVoice()
+  // 請求持久化儲存,降低 iOS/瀏覽器在空間吃緊時清掉 localStorage 的機率
+  navigator.storage?.persist?.().catch(() => {})
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     const synth = window.speechSynthesis
     window.speechSynthesis.onvoiceschanged = loadVoice
