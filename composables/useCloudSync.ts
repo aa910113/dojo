@@ -5,6 +5,28 @@ type SyncStatus = 'disabled' | 'signedOut' | 'syncing' | 'synced' | 'error'
 
 const PUSH_DEBOUNCE_MS = 2000
 
+function dailyActivity(d: any): number {
+  if (!d) return -1
+  return (d.correct ?? 0) + (d.wrong ?? 0) + (d.secondsStudied ?? 0)
+}
+
+// 合併本機與雲端,絕不丟資料:每張卡取練習次數較多的、每天取活動較多的
+function mergePersist(local: PersistShape, remote: Partial<PersistShape>): PersistShape {
+  const cards: PersistShape['cards'] = { ...(remote.cards ?? {}) }
+  for (const [id, lc] of Object.entries(local.cards ?? {})) {
+    const rc = cards[id]
+    if (!rc || (lc.reps ?? 0) >= (rc.reps ?? 0)) cards[id] = lc
+  }
+  const daily: PersistShape['daily'] = { ...(remote.daily ?? {}) }
+  for (const [date, ld] of Object.entries(local.daily ?? {})) {
+    if (dailyActivity(ld) >= dailyActivity(daily[date])) daily[date] = ld
+  }
+  // settings:雲端已有卡片代表是已建立的帳號,以雲端為準;否則用本機
+  const remoteEstablished = Object.keys(remote.cards ?? {}).length > 0
+  const settings = (remoteEstablished && remote.settings ? remote.settings : local.settings)
+  return { cards, daily, settings }
+}
+
 export const useCloudSync = () => {
   const { $supabase } = useNuxtApp()
   const supabase = $supabase as SupabaseClient | null
@@ -32,15 +54,21 @@ export const useCloudSync = () => {
       status.value = 'error'
       return
     }
-    if (data?.data && typeof data.data === 'object') {
-      // 雲端有資料 → 載入(雲端為準)
+    const remote = data?.data as Partial<PersistShape> | undefined
+    const remoteHasData =
+      remote &&
+      typeof remote === 'object' &&
+      (Object.keys(remote.cards ?? {}).length > 0 ||
+        Object.keys(remote.daily ?? {}).length > 0)
+    if (remoteHasData) {
+      // 合併本機與雲端,寫回合併結果(雙向都不丟資料)
+      const merged = mergePersist(persist.value, remote)
       applyingRemote = true
-      importPersist(data.data)
+      importPersist(merged)
       applyingRemote = false
-    } else {
-      // 雲端還沒有 → 用本機資料初始化雲端
-      await push()
     }
+    // 雲端空 → 用本機種子;雲端有 → 把合併結果寫回
+    await push()
     status.value = 'synced'
   }
 
