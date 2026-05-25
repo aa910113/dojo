@@ -17,6 +17,13 @@ export default defineNuxtConfig({
   },
   css: ['~/assets/main.css'],
   compatibilityDate: '2025-01-01',
+  runtimeConfig: {
+    public: {
+      // 由 NUXT_PUBLIC_SUPABASE_URL / NUXT_PUBLIC_SUPABASE_KEY 環境變數覆蓋
+      supabaseUrl: '',
+      supabaseKey: '',
+    },
+  },
   pwa: {
     registerType: 'autoUpdate',
     manifest: {

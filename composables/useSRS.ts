@@ -54,7 +54,7 @@ const SESSION_LAPSE_DEFER_MIN = 24 * 60
 
 const STORAGE_KEY = 'kana-typing-v1'
 
-interface PersistShape {
+export interface PersistShape {
   cards: Record<string, CardState>
   settings: Settings
   daily: Record<string, DailyStats>
