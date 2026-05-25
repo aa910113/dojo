@@ -4,7 +4,7 @@ import { ALL_KANA } from '~/data/kana'
 
 const { settings, stats, updateSettings, pickNext, review, addStudySeconds, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, quiz, startQuiz, quizPickNext, quizAnswer, quizSkip, endQuiz, relearnTodayCards, relearnLaterCards, resetSessionLapses, importPersist } = useSRS()
 
-const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync } = useCloudSync()
+const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
 
 const syncLabel = computed(() => {
   switch (syncStatus.value) {
@@ -267,6 +267,7 @@ function nextQuizCard() {
 
 function continueToLearning() {
   endQuiz()
+  flushCloud() // 測驗結束 → 同步雲端
   lastTickAt = Date.now()
   timerHandle = window.setInterval(tick, 1000)
   next()
@@ -290,6 +291,7 @@ function endSession() {
   sessionStarted.value = false
   current.value = null
   input.value = ''
+  flushCloud() // 結束練習 → 同步雲端
 }
 
 onUnmounted(() => {

@@ -3,8 +3,6 @@ import type { PersistShape } from './useSRS'
 
 type SyncStatus = 'disabled' | 'signedOut' | 'syncing' | 'synced' | 'error'
 
-const PUSH_DEBOUNCE_MS = 2000
-
 function dailyActivity(d: any): number {
   if (!d) return -1
   return (d.correct ?? 0) + (d.wrong ?? 0) + (d.secondsStudied ?? 0)
@@ -37,9 +35,10 @@ export const useCloudSync = () => {
   const status = useState<SyncStatus>('cloud-status', () => 'disabled')
   const initialized = useState<boolean>('cloud-initialized', () => false)
 
-  // 拉遠端期間暫停推送,避免 importPersist 觸發 watch 又立刻推回去
+  // 拉遠端期間暫停標記變動,避免 importPersist 觸發 watch
   let applyingRemote = false
-  let pushTimer: ReturnType<typeof setTimeout> | null = null
+  // 本機有未推送的變更時為 true,只在 checkpoint 推送(不再每 2 秒推)
+  let dirty = false
 
   async function pull() {
     if (!supabase || !user.value) return
@@ -72,8 +71,8 @@ export const useCloudSync = () => {
     status.value = 'synced'
   }
 
-  async function push() {
-    if (!supabase || !user.value) return
+  async function push(): Promise<boolean> {
+    if (!supabase || !user.value) return false
     status.value = 'syncing'
     const { error } = await supabase
       .from('user_state')
@@ -81,15 +80,18 @@ export const useCloudSync = () => {
     if (error) {
       console.warn('[sync] push 失敗:', error.message)
       status.value = 'error'
-      return
+      return false
     }
     status.value = 'synced'
+    return true
   }
 
-  function schedulePush() {
-    if (!supabase || !user.value || applyingRemote) return
-    if (pushTimer) clearTimeout(pushTimer)
-    pushTimer = setTimeout(() => push(), PUSH_DEBOUNCE_MS)
+  // checkpoint 推送:只在有變更、已登入、有網路時推
+  async function flush() {
+    if (!supabase || !user.value || !dirty) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    const ok = await push()
+    if (ok) dirty = false
   }
 
   async function signInWithGoogle() {
@@ -102,10 +104,7 @@ export const useCloudSync = () => {
 
   async function signOut() {
     if (!supabase) return
-    if (pushTimer) {
-      clearTimeout(pushTimer)
-      await push()
-    }
+    await flush()
     await supabase.auth.signOut()
     user.value = null
     status.value = 'signedOut'
@@ -138,9 +137,20 @@ export const useCloudSync = () => {
       }
     })
 
-    // 本機資料一變動就排程推送(debounced)
-    watch(persist, () => schedulePush(), { deep: true })
+    // 變更只標記 dirty,不立即推送;推送由 checkpoint(flush)觸發
+    watch(persist, () => {
+      if (user.value && !applyingRemote) dirty = true
+    }, { deep: true })
+
+    if (typeof window !== 'undefined') {
+      // App 切到背景 / 關閉分頁 → 把握最後機會同步
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flush()
+      })
+      // 重新連上網路 → 補推離線期間的變更
+      window.addEventListener('online', () => flush())
+    }
   }
 
-  return { user, status, signInWithGoogle, signOut, init, push, pull }
+  return { user, status, signInWithGoogle, signOut, init, flush, push, pull }
 }
