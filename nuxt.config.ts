@@ -12,7 +12,10 @@ export default defineNuxtConfig({
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
         { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
       ],
-      link: [{ rel: 'apple-touch-icon', href: '/icon-maskable.svg' }],
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/icon.svg' },
+        { rel: 'apple-touch-icon', href: '/icon-maskable.svg' },
+      ],
     },
   },
   css: ['~/assets/main.css'],
