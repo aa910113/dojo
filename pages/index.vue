@@ -955,7 +955,7 @@ const examCountdown = computed(() => {
             autocorrect="off"
             spellcheck="false"
             placeholder="輸入羅馬字"
-            @keydown.enter.prevent="checkAnswer(input)"
+            @keydown.enter.prevent="showAnswer ? next() : checkAnswer(input)"
           />
           <div class="hint-row">
             <button class="btn-ghost small" @click="reveal" :disabled="showAnswer">
