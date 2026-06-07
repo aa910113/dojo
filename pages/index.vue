@@ -437,6 +437,81 @@ function buildGrid(script: 'hiragana' | 'katakana'): GridCell[][] {
 }
 
 const hiraganaGrid = computed(() => buildGrid('hiragana'))
+
+type CardSortKey = 'char' | 'reps' | 'accuracy' | 'lapses' | 'dueMs'
+const cardSortKey = ref<CardSortKey>('dueMs')
+const cardSortDir = ref<'asc' | 'desc'>('asc')
+const showCardDetails = ref(false)
+const nowTick = ref(Date.now())
+// 讓「下次到期」每分鐘自動刷新
+let nowTickHandle: number | null = null
+onMounted(() => {
+  nowTickHandle = window.setInterval(() => { nowTick.value = Date.now() }, 60_000)
+})
+onBeforeUnmount(() => {
+  if (nowTickHandle != null) clearInterval(nowTickHandle)
+})
+
+function formatDuration(ms: number): string {
+  const past = ms < 0
+  const abs = Math.abs(ms)
+  const min = abs / 60_000
+  let txt: string
+  if (min < 60) txt = `${Math.round(min)} 分`
+  else if (min < 60 * 24) txt = `${Math.round(min / 60)} 小時`
+  else txt = `${Math.round(min / (60 * 24))} 天`
+  return past ? `逾期 ${txt}` : txt
+}
+
+const cardDetailsList = computed(() => {
+  return ALL_KANA
+    .map((k) => ({ entry: k, state: getCardState(k.id) }))
+    .filter((x) => x.state?.introduced)
+    .map(({ entry, state }) => {
+      const s = state!
+      const accuracy = s.reps > 0 ? s.correctTotal / s.reps : 0
+      const dueMs = s.dueAt - nowTick.value
+      const flag: 'red' | 'yellow' | 'green' =
+        s.reps < 10 ? 'green' : accuracy < 0.6 ? 'red' : accuracy < 0.7 ? 'yellow' : 'green'
+      return {
+        id: entry.id,
+        char: entry.char,
+        script: entry.script,
+        reps: s.reps,
+        accuracy,
+        lapses: s.lapses,
+        dueMs,
+        flag,
+      }
+    })
+})
+
+const sortedCardDetails = computed(() => {
+  const arr = [...cardDetailsList.value]
+  const key = cardSortKey.value
+  const dir = cardSortDir.value === 'asc' ? 1 : -1
+  arr.sort((a, b) => {
+    let cmp = 0
+    if (key === 'char') cmp = a.char.localeCompare(b.char)
+    else cmp = (a[key] as number) - (b[key] as number)
+    return cmp * dir
+  })
+  return arr
+})
+
+function toggleCardSort(key: CardSortKey) {
+  if (cardSortKey.value === key) {
+    cardSortDir.value = cardSortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    cardSortKey.value = key
+    cardSortDir.value = key === 'char' ? 'asc' : 'desc'
+  }
+}
+
+function sortArrow(key: CardSortKey): string {
+  if (cardSortKey.value !== key) return ''
+  return cardSortDir.value === 'asc' ? ' ↑' : ' ↓'
+}
 const katakanaGrid = computed(() => buildGrid('katakana'))
 
 function fmtMin(seconds: number) {
@@ -720,6 +795,35 @@ const examCountdown = computed(() => {
                   <button class="btn-ghost small danger" @click="confirmDeleteDaily(d.date)">刪除</button>
                 </template>
               </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="card-details-header">
+          <button class="btn-ghost small" @click="showCardDetails = !showCardDetails">
+            {{ showCardDetails ? '▼' : '▶' }} 卡片詳情 ({{ cardDetailsList.length }})
+          </button>
+        </div>
+        <table v-if="showCardDetails" class="history-table card-details-table">
+          <thead>
+            <tr>
+              <th class="sortable" @click="toggleCardSort('char')">字{{ sortArrow('char') }}</th>
+              <th class="sortable num" @click="toggleCardSort('reps')">練習{{ sortArrow('reps') }}</th>
+              <th class="sortable num" @click="toggleCardSort('accuracy')">準確率{{ sortArrow('accuracy') }}</th>
+              <th class="sortable num" @click="toggleCardSort('lapses')">失誤{{ sortArrow('lapses') }}</th>
+              <th class="sortable num" @click="toggleCardSort('dueMs')">下次到期{{ sortArrow('dueMs') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in sortedCardDetails" :key="c.id">
+              <td>
+                <span class="card-flag" :class="c.flag">●</span>
+                {{ c.char }}
+              </td>
+              <td class="num">{{ c.reps }}</td>
+              <td class="num">{{ c.reps > 0 ? Math.round(c.accuracy * 100) + '%' : '—' }}</td>
+              <td class="num">{{ c.lapses }}</td>
+              <td class="num" :class="{ overdue: c.dueMs < 0 }">{{ formatDuration(c.dueMs) }}</td>
             </tr>
           </tbody>
         </table>
@@ -1566,6 +1670,28 @@ const examCountdown = computed(() => {
   font: inherit;
   font-variant-numeric: tabular-nums;
 }
+
+.card-details-header {
+  margin: 18px 0 8px;
+}
+.card-details-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.card-details-table th.sortable:hover { color: var(--text); }
+.card-details-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.card-details-table .overdue { color: var(--bad); }
+.card-flag {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 10px;
+}
+.card-flag.red { color: var(--bad); }
+.card-flag.yellow { color: #f5a623; }
+.card-flag.green { color: var(--good); }
 
 @media (max-width: 560px) {
   .kana { font-size: 110px; }
