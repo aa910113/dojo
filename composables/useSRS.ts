@@ -210,17 +210,16 @@ export const useSRS = () => {
   function canIntroduceNew(): boolean {
     if (quiz.value.noNewToday) return false
     if (newIntroducedToday() >= persist.value.settings.newPerDay) return false
-    // 還沒穩的舊卡多於每日新字額度時暫停引進 —— 避免新舊雪球越滾越大
+    // 只在有「真正慢性問題」的卡片堆積時暫停 —— 練了夠多次但準確率還是低。
+    // 剛介紹、答對但還不熟的卡片 (高 acc 低 reps) 不算進去,不該卡新字。
     const cap = persist.value.settings.newPerDay
-    let unsettled = 0
+    let chronic = 0
     for (const k of activePool()) {
       const c = persist.value.cards[k.id]
       if (!c?.introduced) continue
-      const inLearning = c.intervalMin < 60 * 24
-      const chronic = c.reps >= 10 && c.correctTotal / c.reps < 0.7
-      if (inLearning || chronic) {
-        unsettled++
-        if (unsettled >= cap) return false
+      if (c.reps >= 10 && c.correctTotal / c.reps < 0.7) {
+        chronic++
+        if (chronic >= cap) return false
       }
     }
     return true
