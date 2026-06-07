@@ -209,7 +209,21 @@ export const useSRS = () => {
 
   function canIntroduceNew(): boolean {
     if (quiz.value.noNewToday) return false
-    return newIntroducedToday() < persist.value.settings.newPerDay
+    if (newIntroducedToday() >= persist.value.settings.newPerDay) return false
+    // 還沒穩的舊卡多於每日新字額度時暫停引進 —— 避免新舊雪球越滾越大
+    const cap = persist.value.settings.newPerDay
+    let unsettled = 0
+    for (const k of activePool()) {
+      const c = persist.value.cards[k.id]
+      if (!c?.introduced) continue
+      const inLearning = c.intervalMin < 60 * 24
+      const chronic = c.reps >= 10 && c.correctTotal / c.reps < 0.7
+      if (inLearning || chronic) {
+        unsettled++
+        if (unsettled >= cap) return false
+      }
+    }
+    return true
   }
 
   function startQuiz(): KanaEntry[] {
