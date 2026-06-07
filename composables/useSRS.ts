@@ -50,6 +50,12 @@ const QUIZ_ALLOWED_WRONG = 2
 const QUIZ_LOCK_NEW_THRESHOLD = 0.3
 const RELEARN_PER_SESSION = 3
 const MAX_INTERVAL_MIN = 90 * 24 * 60
+// 終身準確率不夠的卡片不該被拉到長間隔,避免「靠運氣連對 → 被藏在 90 天後」
+const ACC_CAP_MIN_REPS = 10                  // 樣本太少不套用
+const LOW_ACC_THRESHOLD = 0.6                // <60% 視為嚴重不熟
+const MEDIUM_ACC_THRESHOLD = 0.7             // <70% 視為不夠穩
+const LOW_ACC_CAP_MIN = 2 * 24 * 60          // 2 天上限
+const MEDIUM_ACC_CAP_MIN = 7 * 24 * 60       // 7 天上限
 const SESSION_LAPSE_DEFER_MIN = 24 * 60
 
 const STORAGE_KEY = 'kana-typing-v1'
@@ -403,7 +409,16 @@ export const useSRS = () => {
       } else if (c.intervalMin < 60 * 24) {
         c.intervalMin = 60 * 24
       } else {
-        c.intervalMin = fuzzInterval(Math.round(c.intervalMin * c.ease))
+        // 終身準確率不夠時降低間隔上限,避免有問題的卡被藏在 90 天後
+        let accuracyCap = MAX_INTERVAL_MIN
+        if (c.reps >= ACC_CAP_MIN_REPS) {
+          const lifetimeAcc = c.correctTotal / c.reps
+          if (lifetimeAcc < LOW_ACC_THRESHOLD) accuracyCap = LOW_ACC_CAP_MIN
+          else if (lifetimeAcc < MEDIUM_ACC_THRESHOLD) accuracyCap = MEDIUM_ACC_CAP_MIN
+        }
+        c.intervalMin = fuzzInterval(
+          Math.min(Math.round(c.intervalMin * c.ease), accuracyCap),
+        )
       }
       c.ease = Math.min(3.0, c.ease + 0.05)
     } else {
