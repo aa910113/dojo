@@ -1355,30 +1355,30 @@ const examCountdown = computed(() => {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--panel);
   font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
   color: var(--text);
-  padding: 8px 10px;
-  min-height: 64px;
+  padding: 10px 14px;
+  min-height: 80px;
   line-height: 1.15;
-  gap: 8px;
+  gap: 10px;
 }
 .kana-grid-cell .cell-main {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: 4px;
 }
-.kana-grid-cell .cell-char { font-size: 22px; font-weight: 600; }
-.kana-grid-cell .cell-romaji { font-size: 10px; color: var(--muted); }
+.kana-grid-cell .cell-char { font-size: 30px; font-weight: 600; }
+.kana-grid-cell .cell-romaji { font-size: 13px; color: var(--muted); }
 .kana-grid-cell .cell-stats {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 2px;
-  font-size: 10px;
+  gap: 3px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   white-space: nowrap;
@@ -1553,10 +1553,10 @@ const examCountdown = computed(() => {
   .topbar-stats { gap: 6px; }
   .chip { padding: 4px 8px; }
   .chip-val { font-size: 12px; }
-  .kana-grid-cell { padding: 6px 6px; min-height: 56px; gap: 4px; }
-  .kana-grid-cell .cell-char { font-size: 18px; }
-  .kana-grid-cell .cell-romaji { font-size: 9px; }
-  .kana-grid-cell .cell-stats { font-size: 9px; gap: 1px; }
+  .kana-grid-cell { padding: 8px 8px; min-height: 70px; gap: 6px; }
+  .kana-grid-cell .cell-char { font-size: 24px; }
+  .kana-grid-cell .cell-romaji { font-size: 11px; }
+  .kana-grid-cell .cell-stats { font-size: 11px; gap: 2px; }
   .history-table { font-size: 12px; }
   .history-table th,
   .history-table td { padding: 6px 4px; }
