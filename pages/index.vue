@@ -1380,7 +1380,7 @@ const examCountdown = computed(() => {
 .kana-grid-cell .cell-main {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 4px;
 }
 .kana-grid-cell .cell-char { font-size: 30px; font-weight: 600; }
