@@ -530,7 +530,14 @@ const examCountdown = computed(() => {
                   :class="cell.entry
                     ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced')]
                     : ['empty']"
-                  :title="cell.entry ? cell.entry.char + ' ' + cell.entry.romaji : ''"
+                  :style="cell.entry && cardStatsMap.get(cell.entry.id)?.introduced
+                    ? { '--acc-pct': Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) + '%' }
+                    : null"
+                  :title="cell.entry
+                    ? cell.entry.char + ' ' + cell.entry.romaji + (cardStatsMap.get(cell.entry.id)?.introduced
+                        ? ' · ' + Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) + '%'
+                        : '')
+                    : ''"
                 >
                   <template v-if="cell.entry">
                     <div class="cell-main">
@@ -543,7 +550,6 @@ const examCountdown = computed(() => {
                     >
                       <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
                       <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
-                      <span class="cell-stat cell-stat-acc">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
                     </div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
@@ -563,7 +569,14 @@ const examCountdown = computed(() => {
                   :class="cell.entry
                     ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced')]
                     : ['empty']"
-                  :title="cell.entry ? cell.entry.char + ' ' + cell.entry.romaji : ''"
+                  :style="cell.entry && cardStatsMap.get(cell.entry.id)?.introduced
+                    ? { '--acc-pct': Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) + '%' }
+                    : null"
+                  :title="cell.entry
+                    ? cell.entry.char + ' ' + cell.entry.romaji + (cardStatsMap.get(cell.entry.id)?.introduced
+                        ? ' · ' + Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) + '%'
+                        : '')
+                    : ''"
                 >
                   <template v-if="cell.entry">
                     <div class="cell-main">
@@ -576,7 +589,6 @@ const examCountdown = computed(() => {
                     >
                       <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
                       <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
-                      <span class="cell-stat cell-stat-acc">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
                     </div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
@@ -1338,6 +1350,7 @@ const examCountdown = computed(() => {
   gap: 6px;
 }
 .kana-grid-cell {
+  --acc-pct: 0%;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -1370,27 +1383,34 @@ const examCountdown = computed(() => {
   color: var(--muted);
   white-space: nowrap;
 }
-.kana-grid-cell .cell-stat { opacity: 0.95; }
-.kana-grid-cell .cell-stat-acc {
-  font-weight: 600;
-  color: var(--text);
-}
+.kana-grid-cell .cell-stat { opacity: 0.85; }
 .kana-grid-cell.empty {
   background: transparent;
   border-color: transparent;
 }
+/* 進度條當背景:從左填到 var(--acc-pct),顏色依池子 */
 .kana-grid-cell.pool-bottom {
-  background: rgba(239, 68, 68, 0.22);
-  border-color: rgba(239, 68, 68, 0.55);
+  background: linear-gradient(
+    to right,
+    rgba(239, 68, 68, 0.30) var(--acc-pct),
+    transparent var(--acc-pct)
+  );
+  border-color: rgba(239, 68, 68, 0.40);
 }
-.kana-grid-cell.pool-bottom .cell-stats { color: rgba(255, 200, 200, 0.95); }
 .kana-grid-cell.pool-top {
-  background: rgba(34, 197, 94, 0.22);
-  border-color: rgba(34, 197, 94, 0.55);
+  background: linear-gradient(
+    to right,
+    rgba(34, 197, 94, 0.30) var(--acc-pct),
+    transparent var(--acc-pct)
+  );
+  border-color: rgba(34, 197, 94, 0.40);
 }
-.kana-grid-cell.pool-top .cell-stats { color: rgba(200, 240, 210, 0.95); }
 .kana-grid-cell.pool-mid {
-  background: rgba(255, 255, 255, 0.04);
+  background: linear-gradient(
+    to right,
+    rgba(125, 211, 252, 0.18) var(--acc-pct),
+    transparent var(--acc-pct)
+  );
 }
 .kana-grid-cell.pool-unintroduced {
   background: transparent;
