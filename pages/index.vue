@@ -1064,7 +1064,7 @@ const examCountdown = computed(() => {
         </div>
         <p class="muted focus-done-note">
           這場練的這 {{ focusInitialSize }} 張的最低準確率組會被推高;
-          下次再開時系統會自動挑當下最弱的 6 張 + 最強的 6 張。
+          下次再開時系統會自動挑當下最弱的 6 張 + 全部 ≥90% 的字。
         </p>
         <button class="primary big" @click="finishFocus">回到首頁</button>
       </section>

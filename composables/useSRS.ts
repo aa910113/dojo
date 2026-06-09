@@ -570,9 +570,9 @@ export const useSRS = () => {
   }
 
   // === 重點練習 ===
-  // 取準確率最低的 N 張 + 準確率 >=90% 的 N 張當這一場的固定池。
-  // 目標:把弱的推上來,熟的維持狀態;練到池空 → 完成。
-  function buildFocusPool(bottomN = 6, topN = 6, topMinReps = 5): string[] {
+  // 取準確率最低的 N 張 + 全部 >=90% 的卡當這場的固定池。
+  // 全部 >=90% 是刻意的:每張高分卡都要持續維持,任何一張掉下來就會跑進下次的 bottom。
+  function buildFocusPool(bottomN = 6, topMinReps = 5): string[] {
     const intro = activePool()
       .map((k) => {
         const c = persist.value.cards[k.id]
@@ -587,10 +587,9 @@ export const useSRS = () => {
     const sortedByAccAsc = [...intro].sort((a, b) => a.acc - b.acc || b.reps - a.reps)
     const bottom = sortedByAccAsc.slice(0, bottomN).map((x) => x.id)
     const bottomSet = new Set(bottom)
-    const topCandidates = intro
+    const top = intro
       .filter((x) => x.acc >= 0.9 && x.reps >= topMinReps && !bottomSet.has(x.id))
-      .sort(() => Math.random() - 0.5)
-    const top = topCandidates.slice(0, topN).map((x) => x.id)
+      .map((x) => x.id)
 
     const pool = [...bottom, ...top]
     // Fisher-Yates 洗牌,讓出題順序隨機
