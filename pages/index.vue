@@ -548,8 +548,14 @@ const examCountdown = computed(() => {
                       v-if="cardStatsMap.get(cell.entry.id)?.introduced"
                       class="cell-stats"
                     >
-                      <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
-                      <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                      <span class="cell-stat">
+                        <span class="stat-label">練</span>
+                        <span class="stat-num">{{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
+                      </span>
+                      <span class="cell-stat">
+                        <span class="stat-label">失</span>
+                        <span class="stat-num">{{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                      </span>
                     </div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
@@ -587,8 +593,14 @@ const examCountdown = computed(() => {
                       v-if="cardStatsMap.get(cell.entry.id)?.introduced"
                       class="cell-stats"
                     >
-                      <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
-                      <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                      <span class="cell-stat">
+                        <span class="stat-label">練</span>
+                        <span class="stat-num">{{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
+                      </span>
+                      <span class="cell-stat">
+                        <span class="stat-label">失</span>
+                        <span class="stat-num">{{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                      </span>
                     </div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
@@ -1383,7 +1395,20 @@ const examCountdown = computed(() => {
   color: var(--muted);
   white-space: nowrap;
 }
-.kana-grid-cell .cell-stat { opacity: 0.85; }
+.kana-grid-cell .cell-stat {
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0.9;
+}
+.kana-grid-cell .stat-label {
+  opacity: 0.65;
+}
+.kana-grid-cell .stat-num {
+  display: inline-block;
+  min-width: 2.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .kana-grid-cell.empty {
   background: transparent;
   border-color: transparent;
