@@ -173,6 +173,9 @@ export const useSRS = () => {
   const recent = useState<string[]>('srs-recent', () => [])
   const quiz = useState<QuizState>('srs-quiz', () => emptyQuiz())
   const sessionLapses = useState<Record<string, number>>('srs-session-lapses', () => ({}))
+  const focusQueue = useState<string[]>('srs-focus-queue', () => [])
+  const focusInitialSize = useState<number>('srs-focus-initial', () => 0)
+  const focusCorrectCount = useState<number>('srs-focus-correct', () => 0)
 
   function save() {
     if (typeof window === 'undefined') return
@@ -566,6 +569,69 @@ export const useSRS = () => {
     return 'ok'
   }
 
+  // === 重點練習 ===
+  // 取準確率最低的 N 張 + 準確率 >=90% 的 N 張當這一場的固定池。
+  // 目標:把弱的推上來,熟的維持狀態;練到池空 → 完成。
+  function buildFocusPool(bottomN = 6, topN = 6, topMinReps = 5): string[] {
+    const intro = activePool()
+      .map((k) => {
+        const c = persist.value.cards[k.id]
+        if (!c?.introduced) return null
+        const acc = c.reps > 0 ? c.correctTotal / c.reps : 1
+        return { id: k.id, acc, reps: c.reps }
+      })
+      .filter((x): x is { id: string; acc: number; reps: number } => x !== null)
+
+    if (intro.length === 0) return []
+
+    const sortedByAccAsc = [...intro].sort((a, b) => a.acc - b.acc || b.reps - a.reps)
+    const bottom = sortedByAccAsc.slice(0, bottomN).map((x) => x.id)
+    const bottomSet = new Set(bottom)
+    const topCandidates = intro
+      .filter((x) => x.acc >= 0.9 && x.reps >= topMinReps && !bottomSet.has(x.id))
+      .sort(() => Math.random() - 0.5)
+    const top = topCandidates.slice(0, topN).map((x) => x.id)
+
+    const pool = [...bottom, ...top]
+    // Fisher-Yates 洗牌,讓出題順序隨機
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[pool[i], pool[j]] = [pool[j], pool[i]]
+    }
+    return pool
+  }
+
+  function startFocusSession(): number {
+    const pool = buildFocusPool()
+    focusQueue.value = pool
+    focusInitialSize.value = pool.length
+    focusCorrectCount.value = 0
+    return pool.length
+  }
+
+  function pickFocusCard(): KanaEntry | null {
+    const id = focusQueue.value[0]
+    if (!id) return null
+    return ALL_KANA.find((k) => k.id === id) ?? null
+  }
+
+  // 答對 → 從池移除;答錯 → 移到隊尾(會循環回來再試)
+  function focusAnswer(id: string, correct: boolean) {
+    if (focusQueue.value[0] !== id) return
+    if (correct) {
+      focusQueue.value = focusQueue.value.slice(1)
+      focusCorrectCount.value += 1
+    } else {
+      focusQueue.value = [...focusQueue.value.slice(1), id]
+    }
+  }
+
+  function endFocusSession() {
+    focusQueue.value = []
+    focusInitialSize.value = 0
+    focusCorrectCount.value = 0
+  }
+
   return {
     settings,
     stats,
@@ -593,5 +659,12 @@ export const useSRS = () => {
     relearnLaterCards,
     resetSessionLapses,
     importPersist,
+    focusQueue,
+    focusInitialSize,
+    focusCorrectCount,
+    startFocusSession,
+    pickFocusCard,
+    focusAnswer,
+    endFocusSession,
   }
 }

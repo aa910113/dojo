@@ -2,7 +2,58 @@
 import type { KanaEntry } from '~/data/kana'
 import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, pickNext, review, addStudySeconds, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, quiz, startQuiz, quizPickNext, quizAnswer, quizSkip, endQuiz, relearnTodayCards, relearnLaterCards, resetSessionLapses, importPersist } = useSRS()
+const { settings, stats, updateSettings, pickNext, review, addStudySeconds, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, quiz, startQuiz, quizPickNext, quizAnswer, quizSkip, endQuiz, relearnTodayCards, relearnLaterCards, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession } = useSRS()
+
+const focusFinished = ref(false)
+const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
+const focusProgress = computed(() =>
+  focusInitialSize.value > 0
+    ? Math.round((focusCorrectCount.value / focusInitialSize.value) * 100)
+    : 0,
+)
+
+function next_focus_card_or_finish() {
+  const card = pickFocusCard()
+  if (!card) {
+    focusFinished.value = true
+    current.value = null
+    flushCloud()
+    return
+  }
+  current.value = card
+  input.value = ''
+  feedback.value = 'idle'
+  firstTry.value = true
+  wrongCount.value = 0
+  showAnswer.value = false
+  locked.value = false
+  nextTick(() => inputEl.value?.focus())
+}
+
+function startFocus() {
+  sessionStarted.value = true
+  sessionElapsedSec.value = 0
+  sessionCorrect.value = 0
+  sessionWrong.value = 0
+  sessionRemainingSec.value = 0
+  resetSessionLapses()
+  focusFinished.value = false
+  const n = startFocusSession()
+  if (n === 0) {
+    alert('還沒有可練習的字 — 請先學一些再來重點練習')
+    sessionStarted.value = false
+    return
+  }
+  next_focus_card_or_finish()
+}
+
+function finishFocus() {
+  endFocusSession()
+  focusFinished.value = false
+  sessionStarted.value = false
+  current.value = null
+  input.value = ''
+}
 
 const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
 
@@ -164,6 +215,35 @@ function checkAnswer(value: string) {
   const accepts = current.value.accepts
   const exact = accepts.includes(cleaned)
   const partialMatch = accepts.some((a) => a.startsWith(cleaned))
+
+  // === 重點練習模式 ===
+  if (focusActive.value && !focusFinished.value) {
+    if (exact) {
+      feedback.value = 'good'
+      locked.value = true
+      review(current.value.id, true, firstTry.value)
+      if (firstTry.value) sessionCorrect.value += 1
+      focusAnswer(current.value.id, true)
+      if (settings.value.autoPlaySound) speak(current.value.char)
+      setTimeout(() => next_focus_card_or_finish(), 500)
+      return
+    }
+    const longestF = Math.max(...accepts.map((a) => a.length))
+    if (!partialMatch || cleaned.length >= longestF) {
+      feedback.value = 'bad'
+      if (wrongCount.value === 0) {
+        firstTry.value = false
+        sessionWrong.value += 1
+        review(current.value.id, false, false)
+      }
+      wrongCount.value += 1
+      // 重點練習答錯不開「3 次顯示答案」邏輯,而是直接送回隊尾
+      focusAnswer(current.value.id, false)
+      locked.value = true
+      setTimeout(() => next_focus_card_or_finish(), 600)
+    }
+    return
+  }
 
   if (inQuiz.value) {
     if (exact) {
@@ -933,7 +1013,60 @@ const examCountdown = computed(() => {
             <div class="hero-stat-label">未學</div>
           </div>
         </div>
-        <button class="primary big" @click="startSession">開始</button>
+        <div class="hero-actions">
+          <button class="primary big" @click="startSession">開始</button>
+          <button class="btn-ghost big" @click="startFocus">重點練習</button>
+        </div>
+      </section>
+
+      <section v-else-if="focusActive && !focusFinished" class="panel session focus-panel">
+        <div class="session-bar">
+          <div class="quiz-title">重點練習</div>
+          <div class="session-meta">
+            <span class="ok">✓ {{ focusCorrectCount }}</span>
+            <span class="muted">{{ focusCorrectCount }} / {{ focusInitialSize }}</span>
+          </div>
+          <button class="btn-ghost" @click="finishFocus">結束</button>
+        </div>
+        <div class="focus-progress-bar">
+          <div class="focus-progress-fill" :style="{ width: focusProgress + '%' }"></div>
+        </div>
+        <div v-if="current" class="card" :data-state="feedback">
+          <div class="kana-row">
+            <div class="kana">{{ current.char }}</div>
+          </div>
+          <div class="tag-row">
+            <span class="script-tag">
+              {{ current.script === 'hiragana' ? '平假名' : '片假名' }}
+            </span>
+            <span class="learn-tag">重點</span>
+          </div>
+          <input
+            ref="inputEl"
+            v-model="input"
+            class="answer-input"
+            :class="{ good: feedback === 'good', bad: feedback === 'bad' }"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            placeholder="輸入羅馬字"
+            @keydown.enter.prevent="checkAnswer(input)"
+          />
+        </div>
+      </section>
+
+      <section v-else-if="focusFinished" class="panel session focus-done-panel">
+        <h3>🎉 重點練習完成</h3>
+        <div class="quiz-summary-row">
+          <span class="ok">完成 {{ focusInitialSize }} 張</span>
+          <span class="muted">對 {{ sessionCorrect }} · 錯 {{ sessionWrong }}</span>
+        </div>
+        <p class="muted focus-done-note">
+          這場練的這 {{ focusInitialSize }} 張的最低準確率組會被推高;
+          下次再開時系統會自動挑當下最弱的 6 張 + 最強的 6 張。
+        </p>
+        <button class="primary big" @click="finishFocus">回到首頁</button>
       </section>
 
       <section v-else-if="inQuiz" class="panel session quiz-panel">
@@ -1692,6 +1825,35 @@ const examCountdown = computed(() => {
 .card-flag.red { color: var(--bad); }
 .card-flag.yellow { color: #f5a623; }
 .card-flag.green { color: var(--good); }
+
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.btn-ghost.big {
+  padding: 14px 28px;
+  font-size: 16px;
+  border-radius: 12px;
+}
+.focus-progress-bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: -10px 0 18px;
+}
+.focus-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.focus-done-panel h3 { margin: 0 0 16px; }
+.focus-done-note {
+  font-size: 13px;
+  margin: 16px 0 24px;
+  line-height: 1.6;
+}
 
 @media (max-width: 560px) {
   .kana { font-size: 110px; }
