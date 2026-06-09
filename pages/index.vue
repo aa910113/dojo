@@ -542,8 +542,8 @@ const examCountdown = computed(() => {
                       class="cell-stats"
                     >
                       <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
-                      <span class="cell-stat">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
                       <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                      <span class="cell-stat cell-stat-acc">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
                     </div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
@@ -575,8 +575,8 @@ const examCountdown = computed(() => {
                       class="cell-stats"
                     >
                       <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
-                      <span class="cell-stat">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
                       <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                      <span class="cell-stat cell-stat-acc">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
                     </div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
@@ -1339,36 +1339,42 @@ const examCountdown = computed(() => {
 }
 .kana-grid-cell {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--panel);
   font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
   color: var(--text);
-  padding: 8px 4px;
-  min-height: 78px;
-  line-height: 1.1;
-  gap: 6px;
+  padding: 8px 10px;
+  min-height: 64px;
+  line-height: 1.15;
+  gap: 8px;
 }
 .kana-grid-cell .cell-main {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 2px;
 }
 .kana-grid-cell .cell-char { font-size: 22px; font-weight: 600; }
 .kana-grid-cell .cell-romaji { font-size: 10px; color: var(--muted); }
 .kana-grid-cell .cell-stats {
   display: flex;
-  gap: 4px;
-  font-size: 9px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   white-space: nowrap;
 }
 .kana-grid-cell .cell-stat { opacity: 0.95; }
+.kana-grid-cell .cell-stat-acc {
+  font-weight: 600;
+  color: var(--text);
+}
 .kana-grid-cell.empty {
   background: transparent;
   border-color: transparent;
@@ -1527,10 +1533,10 @@ const examCountdown = computed(() => {
   .topbar-stats { gap: 6px; }
   .chip { padding: 4px 8px; }
   .chip-val { font-size: 12px; }
-  .kana-grid-cell { padding: 6px 2px; min-height: 64px; }
+  .kana-grid-cell { padding: 6px 6px; min-height: 56px; gap: 4px; }
   .kana-grid-cell .cell-char { font-size: 18px; }
   .kana-grid-cell .cell-romaji { font-size: 9px; }
-  .kana-grid-cell .cell-stats { font-size: 8px; gap: 3px; }
+  .kana-grid-cell .cell-stats { font-size: 9px; gap: 1px; }
   .history-table { font-size: 12px; }
   .history-table th,
   .history-table td { padding: 6px 4px; }
