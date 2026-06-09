@@ -175,6 +175,14 @@ function checkAnswer(value: string) {
 
   // === 重點練習模式 ===
   if (focusActive.value && !focusFinished.value) {
+    // 看過答案後輸入 → 不紀錄、不計分,直接送回隊尾
+    if (showAnswer.value) {
+      feedback.value = exact ? 'good' : 'bad'
+      locked.value = true
+      focusAnswer(current.value.id, false)
+      setTimeout(() => next_focus_card_or_finish(), 500)
+      return
+    }
     if (exact) {
       feedback.value = 'good'
       locked.value = true
@@ -194,13 +202,19 @@ function checkAnswer(value: string) {
         review(current.value.id, false, false)
       }
       wrongCount.value += 1
-      // 重點練習答錯不開「3 次顯示答案」邏輯,而是直接送回隊尾
       focusAnswer(current.value.id, false)
       locked.value = true
       setTimeout(() => next_focus_card_or_finish(), 600)
     }
     return
   }
+}
+
+function revealFocusAnswer() {
+  if (!current.value) return
+  showAnswer.value = true
+  if (settings.value.autoPlaySound) speak(current.value.char)
+  nextTick(() => inputEl.value?.focus())
 }
 
 const todayStudyMin = computed(() => Math.floor(stats.value.today.secondsStudied / 60))
@@ -845,6 +859,17 @@ const examCountdown = computed(() => {
             placeholder="輸入羅馬字"
             @keydown.enter.prevent="checkAnswer(input)"
           />
+          <div class="hint-row">
+            <button
+              v-if="!showAnswer"
+              class="btn-ghost small"
+              @click="revealFocusAnswer"
+            >不會 (看答案)</button>
+            <span v-else class="answer-shown">
+              答案: <strong>{{ current.romaji }}</strong>
+              <span class="answer-note muted">看了不記分,需再答對一次才出隊</span>
+            </span>
+          </div>
         </div>
       </section>
 
@@ -1247,6 +1272,8 @@ const examCountdown = computed(() => {
   color: var(--muted);
 }
 .answer-shown :deep(button) { vertical-align: middle; }
+.answer-shown strong { color: var(--text); font-size: 16px; margin: 0 4px; }
+.answer-note { font-size: 11px; margin-left: 8px; }
 
 .empty {
   text-align: center;
