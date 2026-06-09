@@ -320,23 +320,26 @@ function buildGrid(script: 'hiragana' | 'katakana'): GridCell[][] {
 
 const hiraganaGrid = computed(() => buildGrid('hiragana'))
 
-type PoolGroup = 'bottom' | 'top' | 'mid'
-type CardSortKey = 'char' | 'reps' | 'accuracy' | 'lapses' | 'poolRank'
-const cardSortKey = ref<CardSortKey>('accuracy')
-const cardSortDir = ref<'asc' | 'desc'>('asc')
-const showCardDetails = ref(false)
+type PoolGroup = 'bottom' | 'top' | 'mid' | 'unintroduced'
+interface CardStat {
+  pool: PoolGroup
+  accuracy: number
+  reps: number
+  lapses: number
+  introduced: boolean
+}
 
-const cardDetailsList = computed(() => {
+const cardStatsMap = computed<Map<string, CardStat>>(() => {
+  const map = new Map<string, CardStat>()
   const intro = ALL_KANA
     .map((k) => ({ entry: k, state: getCardState(k.id) }))
     .filter((x) => x.state?.introduced)
-    .map(({ entry, state }) => {
-      const s = state!
-      const accuracy = s.reps > 0 ? s.correctTotal / s.reps : 0
-      return { entry, state: s, accuracy }
-    })
+    .map(({ entry, state }) => ({
+      entry,
+      state: state!,
+      accuracy: state!.reps > 0 ? state!.correctTotal / state!.reps : 0,
+    }))
 
-  // bottom 6:準確率最低的 6 張
   const bottomIds = new Set(
     [...intro]
       .sort((a, b) => a.accuracy - b.accuracy || b.state.reps - a.state.reps)
@@ -344,60 +347,39 @@ const cardDetailsList = computed(() => {
       .map((x) => x.entry.id),
   )
 
-  return intro.map(({ entry, state, accuracy }) => {
-    const inBottom = bottomIds.has(entry.id)
+  for (const k of ALL_KANA) {
+    const state = getCardState(k.id)
+    if (!state?.introduced) {
+      map.set(k.id, { pool: 'unintroduced', accuracy: 0, reps: 0, lapses: 0, introduced: false })
+      continue
+    }
+    const accuracy = state.reps > 0 ? state.correctTotal / state.reps : 0
+    const inBottom = bottomIds.has(k.id)
     const inTop = !inBottom && accuracy >= 0.9 && state.reps >= 5
     const pool: PoolGroup = inBottom ? 'bottom' : inTop ? 'top' : 'mid'
-    // poolRank 給排序用:bottom=0, mid=1, top=2 (asc 看順) ;同組內以準確率為次序
-    const poolRank = inBottom ? 0 + accuracy : inTop ? 2 + accuracy : 1 + accuracy
-    const flag: 'red' | 'yellow' | 'green' =
-      state.reps < 10
-        ? 'green'
-        : accuracy < 0.6
-        ? 'red'
-        : accuracy < 0.7
-        ? 'yellow'
-        : 'green'
-    return {
-      id: entry.id,
-      char: entry.char,
-      script: entry.script,
-      reps: state.reps,
-      accuracy,
-      lapses: state.lapses,
-      pool,
-      poolRank,
-      flag,
-    }
-  })
-})
-
-const sortedCardDetails = computed(() => {
-  const arr = [...cardDetailsList.value]
-  const key = cardSortKey.value
-  const dir = cardSortDir.value === 'asc' ? 1 : -1
-  arr.sort((a, b) => {
-    let cmp = 0
-    if (key === 'char') cmp = a.char.localeCompare(b.char)
-    else cmp = (a[key] as number) - (b[key] as number)
-    return cmp * dir
-  })
-  return arr
-})
-
-function toggleCardSort(key: CardSortKey) {
-  if (cardSortKey.value === key) {
-    cardSortDir.value = cardSortDir.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    cardSortKey.value = key
-    cardSortDir.value = key === 'char' ? 'asc' : 'desc'
+    map.set(k.id, { pool, accuracy, reps: state.reps, lapses: state.lapses, introduced: true })
   }
+  return map
+})
+
+const selectedCardId = ref<string | null>(null)
+const selectedCardDetail = computed(() => {
+  if (!selectedCardId.value) return null
+  const entry = ALL_KANA.find((k) => k.id === selectedCardId.value)
+  if (!entry) return null
+  const stat = cardStatsMap.value.get(entry.id)
+  if (!stat) return null
+  return { entry, stat }
+})
+
+function selectCard(id: string) {
+  selectedCardId.value = selectedCardId.value === id ? null : id
 }
 
-function sortArrow(key: CardSortKey): string {
-  if (cardSortKey.value !== key) return ''
-  return cardSortDir.value === 'asc' ? ' ↑' : ' ↓'
+function poolLabel(pool: PoolGroup): string {
+  return pool === 'bottom' ? 'Bottom 6' : pool === 'top' ? '≥90%' : pool === 'mid' ? '中段' : '未學'
 }
+
 const katakanaGrid = computed(() => buildGrid('katakana'))
 
 function fmtMin(seconds: number) {
@@ -547,14 +529,11 @@ const examCountdown = computed(() => {
           </div>
         </div>
 
-        <div class="heat-legend">
-          <span class="legend-label">不熟</span>
-          <span class="heat-cell s0"></span>
-          <span class="heat-cell s1"></span>
-          <span class="heat-cell s2"></span>
-          <span class="heat-cell s3"></span>
-          <span class="heat-cell s4"></span>
-          <span class="legend-label">熟練</span>
+        <div class="pool-legend">
+          <span class="pool-tag pool-bottom">Bottom 6</span>
+          <span class="pool-tag pool-mid">中段</span>
+          <span class="pool-tag pool-top">≥90%</span>
+          <span class="pool-tag pool-unintroduced">未學</span>
         </div>
 
         <div class="kana-grids-row">
@@ -562,15 +541,23 @@ const examCountdown = computed(() => {
             <h4>平假名</h4>
             <div class="kana-grid">
               <div v-for="(row, ri) in hiraganaGrid" :key="'h' + ri" class="kana-grid-row">
-                <div
+                <button
                   v-for="(cell, ci) in row"
                   :key="ci"
                   class="kana-grid-cell"
-                  :class="cell.entry ? 's' + cell.score : 'empty'"
+                  :class="cell.entry
+                    ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced'),
+                       { selected: cell.entry.id === selectedCardId }]
+                    : ['empty']"
+                  :disabled="!cell.entry"
                   :title="cell.entry ? cell.entry.char + ' ' + cell.entry.romaji : ''"
+                  @click="cell.entry && selectCard(cell.entry.id)"
                 >
-                  <template v-if="cell.entry">{{ cell.entry.char }}</template>
-                </div>
+                  <template v-if="cell.entry">
+                    <span class="cell-char">{{ cell.entry.char }}</span>
+                    <span class="cell-romaji">{{ cell.entry.romaji }}</span>
+                  </template>
+                </button>
               </div>
             </div>
           </div>
@@ -579,18 +566,45 @@ const examCountdown = computed(() => {
             <h4>片假名</h4>
             <div class="kana-grid">
               <div v-for="(row, ri) in katakanaGrid" :key="'k' + ri" class="kana-grid-row">
-                <div
+                <button
                   v-for="(cell, ci) in row"
                   :key="ci"
                   class="kana-grid-cell"
-                  :class="cell.entry ? 's' + cell.score : 'empty'"
+                  :class="cell.entry
+                    ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced'),
+                       { selected: cell.entry.id === selectedCardId }]
+                    : ['empty']"
+                  :disabled="!cell.entry"
                   :title="cell.entry ? cell.entry.char + ' ' + cell.entry.romaji : ''"
+                  @click="cell.entry && selectCard(cell.entry.id)"
                 >
-                  <template v-if="cell.entry">{{ cell.entry.char }}</template>
-                </div>
+                  <template v-if="cell.entry">
+                    <span class="cell-char">{{ cell.entry.char }}</span>
+                    <span class="cell-romaji">{{ cell.entry.romaji }}</span>
+                  </template>
+                </button>
               </div>
             </div>
           </div>
+        </div>
+
+        <div v-if="selectedCardDetail" class="card-detail-panel">
+          <div class="card-detail-head">
+            <span class="card-detail-char">{{ selectedCardDetail.entry.char }}</span>
+            <span class="card-detail-romaji">{{ selectedCardDetail.entry.romaji }}</span>
+            <span class="pool-tag" :class="'pool-' + selectedCardDetail.stat.pool">
+              {{ poolLabel(selectedCardDetail.stat.pool) }}
+            </span>
+            <button class="btn-ghost small" @click="selectedCardId = null">關閉</button>
+          </div>
+          <div class="card-detail-stats">
+            <span><strong>練習</strong> {{ selectedCardDetail.stat.reps }}</span>
+            <span><strong>準確率</strong> {{ selectedCardDetail.stat.reps > 0 ? Math.round(selectedCardDetail.stat.accuracy * 100) + '%' : '—' }}</span>
+            <span><strong>失誤</strong> {{ selectedCardDetail.stat.lapses }}</span>
+          </div>
+        </div>
+        <div v-else-if="cardStatsMap.size > 0" class="card-detail-hint muted">
+          點任一字看詳情
         </div>
 
         <h4>每日活動</h4>
@@ -685,38 +699,6 @@ const examCountdown = computed(() => {
           </tbody>
         </table>
 
-        <div class="card-details-header">
-          <button class="btn-ghost small" @click="showCardDetails = !showCardDetails">
-            {{ showCardDetails ? '▼' : '▶' }} 卡片詳情 ({{ cardDetailsList.length }})
-          </button>
-        </div>
-        <table v-if="showCardDetails" class="history-table card-details-table">
-          <thead>
-            <tr>
-              <th class="sortable" @click="toggleCardSort('char')">字{{ sortArrow('char') }}</th>
-              <th class="sortable num" @click="toggleCardSort('reps')">練習{{ sortArrow('reps') }}</th>
-              <th class="sortable num" @click="toggleCardSort('accuracy')">準確率{{ sortArrow('accuracy') }}</th>
-              <th class="sortable num" @click="toggleCardSort('lapses')">失誤{{ sortArrow('lapses') }}</th>
-              <th class="sortable" @click="toggleCardSort('poolRank')">池{{ sortArrow('poolRank') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="c in sortedCardDetails" :key="c.id">
-              <td>
-                <span class="card-flag" :class="c.flag">●</span>
-                {{ c.char }}
-              </td>
-              <td class="num">{{ c.reps }}</td>
-              <td class="num">{{ c.reps > 0 ? Math.round(c.accuracy * 100) + '%' : '—' }}</td>
-              <td class="num">{{ c.lapses }}</td>
-              <td>
-                <span class="pool-tag" :class="'pool-' + c.pool">
-                  {{ c.pool === 'bottom' ? 'Bottom 6' : c.pool === 'top' ? '≥90%' : '中段' }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
       </section>
 
       <section v-if="showSettings" class="panel settings">
@@ -1328,7 +1310,6 @@ const examCountdown = computed(() => {
   font-weight: 600;
   letter-spacing: 0.05em;
 }
-.heat-legend,
 .cal-legend {
   display: flex;
   align-items: center;
@@ -1339,7 +1320,6 @@ const examCountdown = computed(() => {
   margin: 8px 0 4px;
 }
 .legend-label { padding: 0 4px; }
-.heat-cell,
 .cal-cell {
   width: 12px;
   height: 12px;
@@ -1347,12 +1327,18 @@ const examCountdown = computed(() => {
   display: inline-block;
   flex-shrink: 0;
 }
+.cal-cell.s0 { background: rgba(255, 255, 255, 0.05); }
+.cal-cell.s1 { background: rgba(125, 211, 252, 0.22); }
+.cal-cell.s2 { background: rgba(125, 211, 252, 0.42); }
+.cal-cell.s3 { background: rgba(125, 211, 252, 0.66); }
+.cal-cell.s4 { background: var(--accent); }
 
-.s0 { background: rgba(255, 255, 255, 0.05); }
-.s1 { background: rgba(125, 211, 252, 0.22); }
-.s2 { background: rgba(125, 211, 252, 0.42); }
-.s3 { background: rgba(125, 211, 252, 0.66); }
-.s4 { background: var(--accent); }
+.pool-legend {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+}
 
 .kana-grids-row {
   display: grid;
@@ -1376,16 +1362,76 @@ const examCountdown = computed(() => {
 .kana-grid-cell {
   aspect-ratio: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  font-size: 22px;
+  border: 1.5px solid var(--border);
+  background: var(--panel);
   font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
   color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: transform 0.1s ease, border-color 0.1s ease;
 }
-.kana-grid-cell.empty { background: transparent; }
-.kana-grid-cell.s0 { color: var(--muted); }
-.kana-grid-cell.s4 { color: #0a1620; font-weight: 700; }
+.kana-grid-cell:not(:disabled):hover { transform: scale(1.06); }
+.kana-grid-cell .cell-char { font-size: 20px; }
+.kana-grid-cell .cell-romaji { font-size: 9px; color: var(--muted); margin-top: 2px; }
+.kana-grid-cell.empty {
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+.kana-grid-cell.pool-bottom { border-color: var(--bad); }
+.kana-grid-cell.pool-top { border-color: var(--good); }
+.kana-grid-cell.pool-mid { /* default border */ }
+.kana-grid-cell.pool-unintroduced { opacity: 0.35; }
+.kana-grid-cell.pool-unintroduced .cell-romaji { color: var(--muted); }
+.kana-grid-cell.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.card-detail-panel {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.card-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.card-detail-char {
+  font-size: 28px;
+  font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
+}
+.card-detail-romaji {
+  font-size: 14px;
+  color: var(--muted);
+}
+.card-detail-head .btn-ghost { margin-left: auto; }
+.card-detail-stats {
+  display: flex;
+  gap: 18px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.card-detail-stats strong {
+  color: var(--muted);
+  font-weight: 500;
+  margin-right: 4px;
+}
+.card-detail-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  text-align: center;
+}
 
 .cal-wrap { margin-bottom: 8px; }
 .cal-months {
@@ -1472,27 +1518,6 @@ const examCountdown = computed(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.card-details-header {
-  margin: 18px 0 8px;
-}
-.card-details-table th.sortable {
-  cursor: pointer;
-  user-select: none;
-}
-.card-details-table th.sortable:hover { color: var(--text); }
-.card-details-table .num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.card-details-table .overdue { color: var(--bad); }
-.card-flag {
-  display: inline-block;
-  margin-right: 4px;
-  font-size: 10px;
-}
-.card-flag.red { color: var(--bad); }
-.card-flag.yellow { color: #f5a623; }
-.card-flag.green { color: var(--good); }
 .pool-tag {
   display: inline-block;
   padding: 1px 8px;
@@ -1503,6 +1528,7 @@ const examCountdown = computed(() => {
 .pool-tag.pool-bottom { color: var(--bad); border-color: var(--bad); }
 .pool-tag.pool-top { color: var(--good); border-color: var(--good); }
 .pool-tag.pool-mid { color: var(--muted); }
+.pool-tag.pool-unintroduced { color: var(--muted); opacity: 0.5; }
 
 .hero-actions {
   display: flex;
@@ -1538,7 +1564,8 @@ const examCountdown = computed(() => {
   .topbar-stats { gap: 6px; }
   .chip { padding: 4px 8px; }
   .chip-val { font-size: 12px; }
-  .kana-grid-cell { font-size: 16px; }
+  .kana-grid-cell .cell-char { font-size: 16px; }
+  .kana-grid-cell .cell-romaji { font-size: 8px; }
   .kana-grids-row { grid-template-columns: 1fr; }
   .history-table { font-size: 12px; }
   .history-table th,
