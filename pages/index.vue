@@ -2,7 +2,7 @@
 import type { KanaEntry } from '~/data/kana'
 import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, pickNext, review, addStudySeconds, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, quiz, startQuiz, quizPickNext, quizAnswer, quizSkip, endQuiz, relearnTodayCards, relearnLaterCards, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -32,10 +32,8 @@ function next_focus_card_or_finish() {
 
 function startFocus() {
   sessionStarted.value = true
-  sessionElapsedSec.value = 0
   sessionCorrect.value = 0
   sessionWrong.value = 0
-  sessionRemainingSec.value = 0
   resetSessionLapses()
   focusFinished.value = false
   const n = startFocusSession()
@@ -101,23 +99,6 @@ async function onImportFile(e: Event) {
   }
 }
 
-function skipQuizCard() {
-  if (!current.value) return
-  quizSkip(current.value.id)
-  nextQuizCard()
-}
-
-function skipWholeQuiz() {
-  endQuiz()
-  lastTickAt = Date.now()
-  timerHandle = window.setInterval(tick, 1000)
-  next()
-}
-
-const inQuiz = computed(() => quiz.value.active && !quiz.value.finished)
-const quizFinished = computed(() => quiz.value.active && quiz.value.finished)
-const quizTotal = computed(() => quiz.value.order.length)
-
 const editingDate = ref<string | null>(null)
 const editingValue = ref('')
 
@@ -181,32 +162,8 @@ const inputEl = ref<HTMLInputElement | null>(null)
 const showSettings = ref(false)
 const showHistory = ref(false)
 const sessionStarted = ref(false)
-const sessionRemainingSec = ref(0)
-const sessionElapsedSec = ref(0)
 const sessionCorrect = ref(0)
 const sessionWrong = ref(0)
-
-let timerHandle: number | null = null
-let lastTickAt = 0
-
-function next() {
-  current.value = pickNext()
-  input.value = ''
-  feedback.value = 'idle'
-  firstTry.value = true
-  wrongCount.value = 0
-  showAnswer.value = false
-  locked.value = false
-  nextTick(() => {
-    inputEl.value?.focus()
-    if (!current.value) return
-    const c = getCardState(current.value.id)
-    const learning = !c || c.correctTotal < 2
-    if (settings.value.autoPlaySound && learning) {
-      speak(current.value.char)
-    }
-  })
-}
 
 function checkAnswer(value: string) {
   if (!current.value || locked.value) return
@@ -244,144 +201,6 @@ function checkAnswer(value: string) {
     }
     return
   }
-
-  if (inQuiz.value) {
-    if (exact) {
-      feedback.value = 'good'
-      locked.value = true
-      quizAnswer(current.value.id, true)
-      setTimeout(() => nextQuizCard(), 400)
-      return
-    }
-    const longest = Math.max(...accepts.map((a) => a.length))
-    if (!partialMatch || cleaned.length >= longest) {
-      feedback.value = 'bad'
-      locked.value = true
-      const result = quizAnswer(current.value.id, false)
-      if (result === 'retry') {
-        setTimeout(() => {
-          input.value = ''
-          feedback.value = 'idle'
-          locked.value = false
-          inputEl.value?.focus()
-        }, 600)
-      } else {
-        setTimeout(() => nextQuizCard(), 800)
-      }
-    }
-    return
-  }
-
-  if (exact) {
-    feedback.value = 'good'
-    locked.value = true
-    review(current.value.id, true, firstTry.value)
-    if (firstTry.value) sessionCorrect.value += 1
-    if (settings.value.autoPlaySound) speak(current.value.char)
-    setTimeout(() => next(), 700)
-    return
-  }
-  const longest = Math.max(...accepts.map((a) => a.length))
-  if (!partialMatch || cleaned.length >= longest) {
-    feedback.value = 'bad'
-    if (wrongCount.value === 0) {
-      firstTry.value = false
-      sessionWrong.value += 1
-      review(current.value.id, false, false)
-    }
-    wrongCount.value += 1
-    if (wrongCount.value >= 3) {
-      reveal()
-      return
-    }
-    locked.value = true
-    setTimeout(() => {
-      input.value = ''
-      feedback.value = 'idle'
-      locked.value = false
-      inputEl.value?.focus()
-    }, 500)
-  }
-}
-
-function reveal() {
-  if (!current.value) return
-  showAnswer.value = true
-  feedback.value = 'revealed'
-  locked.value = true
-  if (wrongCount.value === 0) {
-    firstTry.value = false
-    sessionWrong.value += 1
-    review(current.value.id, false, false)
-  }
-  if (settings.value.autoPlaySound) speak(current.value.char)
-}
-
-function startSession() {
-  sessionStarted.value = true
-  sessionElapsedSec.value = 0
-  sessionCorrect.value = 0
-  sessionWrong.value = 0
-  sessionRemainingSec.value = settings.value.sessionMinutes * 60
-  resetSessionLapses()
-  const quizCards = startQuiz()
-  if (quizCards.length > 0) {
-    nextQuizCard()
-  } else {
-    lastTickAt = Date.now()
-    timerHandle = window.setInterval(tick, 1000)
-    next()
-  }
-}
-
-function nextQuizCard() {
-  current.value = quizPickNext()
-  input.value = ''
-  feedback.value = 'idle'
-  firstTry.value = true
-  wrongCount.value = 0
-  showAnswer.value = false
-  locked.value = false
-  nextTick(() => inputEl.value?.focus())
-}
-
-function continueToLearning() {
-  endQuiz()
-  flushCloud() // 測驗結束 → 同步雲端
-  lastTickAt = Date.now()
-  timerHandle = window.setInterval(tick, 1000)
-  next()
-}
-
-function tick() {
-  const now = Date.now()
-  const delta = Math.round((now - lastTickAt) / 1000)
-  lastTickAt = now
-  sessionElapsedSec.value += delta
-  sessionRemainingSec.value = Math.max(0, sessionRemainingSec.value - delta)
-  addStudySeconds(delta)
-  if (sessionRemainingSec.value === 0) endSession()
-}
-
-function endSession() {
-  if (timerHandle != null) {
-    clearInterval(timerHandle)
-    timerHandle = null
-  }
-  sessionStarted.value = false
-  current.value = null
-  input.value = ''
-  flushCloud() // 結束練習 → 同步雲端
-}
-
-onUnmounted(() => {
-  if (timerHandle != null) clearInterval(timerHandle)
-})
-
-const fmtTime = (s: number) => {
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
 }
 
 const todayStudyMin = computed(() => Math.floor(stats.value.today.secondsStudied / 60))
@@ -391,19 +210,6 @@ const todayAccuracy = computed(() => {
   const w = stats.value.today.wrong
   if (c + w === 0) return 0
   return Math.round((c / (c + w)) * 100)
-})
-
-const sessionAccuracy = computed(() => {
-  const t = sessionCorrect.value + sessionWrong.value
-  if (t === 0) return 0
-  return Math.round((sessionCorrect.value / t) * 100)
-})
-
-const isLearning = computed(() => {
-  if (!current.value) return false
-  const c = getCardState(current.value.id)
-  if (!c) return true
-  return c.correctTotal < 2
 })
 
 const ttsSupported = ref(false)
@@ -439,10 +245,6 @@ function speak(text: string) {
   // 單一假名很短,重疊無妨
   synth.speak(u)
   if (synth.paused) synth.resume()
-}
-
-function playCurrent() {
-  if (current.value) speak(current.value.char)
 }
 
 let speechKeepAlive: number | null = null
@@ -483,7 +285,7 @@ watch(input, (v) => {
 function confirmReset() {
   if (confirm('確定要清除所有學習進度?')) {
     resetAll()
-    endSession()
+    finishFocus()
   }
 }
 
@@ -518,52 +320,56 @@ function buildGrid(script: 'hiragana' | 'katakana'): GridCell[][] {
 
 const hiraganaGrid = computed(() => buildGrid('hiragana'))
 
-type CardSortKey = 'char' | 'reps' | 'accuracy' | 'lapses' | 'dueMs'
-const cardSortKey = ref<CardSortKey>('dueMs')
+type PoolGroup = 'bottom' | 'top' | 'mid'
+type CardSortKey = 'char' | 'reps' | 'accuracy' | 'lapses' | 'poolRank'
+const cardSortKey = ref<CardSortKey>('accuracy')
 const cardSortDir = ref<'asc' | 'desc'>('asc')
 const showCardDetails = ref(false)
-const nowTick = ref(Date.now())
-// 讓「下次到期」每分鐘自動刷新
-let nowTickHandle: number | null = null
-onMounted(() => {
-  nowTickHandle = window.setInterval(() => { nowTick.value = Date.now() }, 60_000)
-})
-onBeforeUnmount(() => {
-  if (nowTickHandle != null) clearInterval(nowTickHandle)
-})
-
-function formatDuration(ms: number): string {
-  const past = ms < 0
-  const abs = Math.abs(ms)
-  const min = abs / 60_000
-  let txt: string
-  if (min < 60) txt = `${Math.round(min)} 分`
-  else if (min < 60 * 24) txt = `${Math.round(min / 60)} 小時`
-  else txt = `${Math.round(min / (60 * 24))} 天`
-  return past ? `逾期 ${txt}` : txt
-}
 
 const cardDetailsList = computed(() => {
-  return ALL_KANA
+  const intro = ALL_KANA
     .map((k) => ({ entry: k, state: getCardState(k.id) }))
     .filter((x) => x.state?.introduced)
     .map(({ entry, state }) => {
       const s = state!
       const accuracy = s.reps > 0 ? s.correctTotal / s.reps : 0
-      const dueMs = s.dueAt - nowTick.value
-      const flag: 'red' | 'yellow' | 'green' =
-        s.reps < 10 ? 'green' : accuracy < 0.6 ? 'red' : accuracy < 0.7 ? 'yellow' : 'green'
-      return {
-        id: entry.id,
-        char: entry.char,
-        script: entry.script,
-        reps: s.reps,
-        accuracy,
-        lapses: s.lapses,
-        dueMs,
-        flag,
-      }
+      return { entry, state: s, accuracy }
     })
+
+  // bottom 6:準確率最低的 6 張
+  const bottomIds = new Set(
+    [...intro]
+      .sort((a, b) => a.accuracy - b.accuracy || b.state.reps - a.state.reps)
+      .slice(0, 6)
+      .map((x) => x.entry.id),
+  )
+
+  return intro.map(({ entry, state, accuracy }) => {
+    const inBottom = bottomIds.has(entry.id)
+    const inTop = !inBottom && accuracy >= 0.9 && state.reps >= 5
+    const pool: PoolGroup = inBottom ? 'bottom' : inTop ? 'top' : 'mid'
+    // poolRank 給排序用:bottom=0, mid=1, top=2 (asc 看順) ;同組內以準確率為次序
+    const poolRank = inBottom ? 0 + accuracy : inTop ? 2 + accuracy : 1 + accuracy
+    const flag: 'red' | 'yellow' | 'green' =
+      state.reps < 10
+        ? 'green'
+        : accuracy < 0.6
+        ? 'red'
+        : accuracy < 0.7
+        ? 'yellow'
+        : 'green'
+    return {
+      id: entry.id,
+      char: entry.char,
+      script: entry.script,
+      reps: state.reps,
+      accuracy,
+      lapses: state.lapses,
+      pool,
+      poolRank,
+      flag,
+    }
+  })
 })
 
 const sortedCardDetails = computed(() => {
@@ -891,7 +697,7 @@ const examCountdown = computed(() => {
               <th class="sortable num" @click="toggleCardSort('reps')">練習{{ sortArrow('reps') }}</th>
               <th class="sortable num" @click="toggleCardSort('accuracy')">準確率{{ sortArrow('accuracy') }}</th>
               <th class="sortable num" @click="toggleCardSort('lapses')">失誤{{ sortArrow('lapses') }}</th>
-              <th class="sortable num" @click="toggleCardSort('dueMs')">下次到期{{ sortArrow('dueMs') }}</th>
+              <th class="sortable" @click="toggleCardSort('poolRank')">池{{ sortArrow('poolRank') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -903,7 +709,11 @@ const examCountdown = computed(() => {
               <td class="num">{{ c.reps }}</td>
               <td class="num">{{ c.reps > 0 ? Math.round(c.accuracy * 100) + '%' : '—' }}</td>
               <td class="num">{{ c.lapses }}</td>
-              <td class="num" :class="{ overdue: c.dueMs < 0 }">{{ formatDuration(c.dueMs) }}</td>
+              <td>
+                <span class="pool-tag" :class="'pool-' + c.pool">
+                  {{ c.pool === 'bottom' ? 'Bottom 6' : c.pool === 'top' ? '≥90%' : '中段' }}
+                </span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1013,10 +823,7 @@ const examCountdown = computed(() => {
             <div class="hero-stat-label">未學</div>
           </div>
         </div>
-        <div class="hero-actions">
-          <button class="primary big" @click="startSession">開始</button>
-          <button class="btn-ghost big" @click="startFocus">重點練習</button>
-        </div>
+        <button class="primary big" @click="startFocus">重點練習</button>
       </section>
 
       <section v-else-if="focusActive && !focusFinished" class="panel session focus-panel">
@@ -1069,145 +876,6 @@ const examCountdown = computed(() => {
         <button class="primary big" @click="finishFocus">回到首頁</button>
       </section>
 
-      <section v-else-if="inQuiz" class="panel session quiz-panel">
-        <div class="session-bar">
-          <div class="quiz-title">今日測驗</div>
-          <div class="session-meta">
-            <span class="ok">✓ {{ quiz.passedCount }}</span>
-            <span class="ng">✗ {{ quiz.failedCount }}</span>
-            <span class="muted">{{ quiz.passedCount + quiz.failedCount }} / {{ quizTotal }}</span>
-          </div>
-          <button class="btn-ghost" @click="skipWholeQuiz">跳過測驗</button>
-        </div>
-        <div class="quiz-hint muted">
-          每張需答對 {{ 3 }} 次才算通過,答錯一次就算忘記。
-        </div>
-
-        <div v-if="current" class="card" :data-state="feedback">
-          <div class="kana-row">
-            <div class="kana">{{ current.char }}</div>
-          </div>
-          <div class="tag-row">
-            <span class="script-tag">
-              {{ current.script === 'hiragana' ? '平假名' : '片假名' }}
-            </span>
-            <span class="learn-tag">測驗中</span>
-          </div>
-          <input
-            ref="inputEl"
-            v-model="input"
-            class="answer-input"
-            :class="{ good: feedback === 'good', bad: feedback === 'bad' }"
-            autocomplete="off"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            placeholder="輸入羅馬字"
-            @keydown.enter.prevent="checkAnswer(input)"
-          />
-          <div class="hint-row">
-            <button class="btn-ghost small" @click="skipQuizCard">
-              跳過 (算忘記)
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section v-else-if="quizFinished" class="panel session quiz-results-panel">
-        <h3>測驗結果</h3>
-        <div class="quiz-summary">
-          <div class="quiz-summary-row">
-            <span class="ok">答對 {{ quiz.passedCount }}</span>
-            <span class="ng">忘記 {{ quiz.failedCount }}</span>
-            <span class="muted">共 {{ quizTotal }} 張</span>
-          </div>
-        </div>
-        <div v-if="relearnTodayCards().length > 0" class="quiz-failed-list">
-          <div class="quiz-failed-label muted">今天先重學這 {{ relearnTodayCards().length }} 張</div>
-          <div class="quiz-failed-chips">
-            <span v-for="k in relearnTodayCards()" :key="k.id" class="quiz-failed-chip">
-              {{ k.char }}
-              <span class="quiz-failed-romaji">{{ k.romaji }}</span>
-            </span>
-          </div>
-        </div>
-        <div v-if="relearnLaterCards().length > 0" class="quiz-failed-list">
-          <div class="quiz-failed-label muted">明天再排這 {{ relearnLaterCards().length }} 張</div>
-          <div class="quiz-failed-chips">
-            <span v-for="k in relearnLaterCards()" :key="k.id" class="quiz-failed-chip quiz-deferred-chip">
-              {{ k.char }}
-              <span class="quiz-failed-romaji">{{ k.romaji }}</span>
-            </span>
-          </div>
-        </div>
-        <div v-if="quiz.noNewToday" class="quiz-lock-notice">
-          忘記的字較多,今天暫停介紹新字,先把舊的鞏固。
-        </div>
-        <button class="primary big" @click="continueToLearning">繼續學習</button>
-      </section>
-
-      <section v-else class="panel session">
-        <div class="session-bar">
-          <div class="timer" :class="{ low: sessionRemainingSec <= 60 }">
-            {{ fmtTime(sessionRemainingSec) }}
-          </div>
-          <div class="session-meta">
-            <span class="ok">✓ {{ sessionCorrect }}</span>
-            <span class="ng">✗ {{ sessionWrong }}</span>
-            <span class="muted">{{ sessionAccuracy }}%</span>
-          </div>
-          <button class="btn-ghost" @click="endSession">結束</button>
-        </div>
-
-        <div v-if="current" class="card" :data-state="feedback">
-          <div class="kana-row">
-            <div class="kana">{{ current.char }}</div>
-            <button
-              v-if="ttsSupported"
-              class="speak-btn"
-              :title="settings.autoPlaySound ? '播放讀音' : '播放讀音 (自動播放已關)'"
-              @click="playCurrent"
-            >
-              🔊
-            </button>
-          </div>
-          <div class="tag-row">
-            <span class="script-tag">
-              {{ current.script === 'hiragana' ? '平假名' : '片假名' }}
-            </span>
-            <span v-if="isLearning" class="learn-tag">學習中</span>
-          </div>
-          <div v-if="isLearning" class="learn-hint">
-            <span class="learn-hint-label">讀法</span>
-            <span class="learn-hint-romaji">{{ current.romaji }}</span>
-            <span class="learn-hint-note">看著打,熟了就會消失</span>
-          </div>
-          <input
-            ref="inputEl"
-            v-model="input"
-            class="answer-input"
-            :class="{ good: feedback === 'good', bad: feedback === 'bad' }"
-            autocomplete="off"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            placeholder="輸入羅馬字"
-            @keydown.enter.prevent="showAnswer ? next() : checkAnswer(input)"
-          />
-          <div class="hint-row">
-            <button class="btn-ghost small" @click="reveal" :disabled="showAnswer">
-              不會 (顯示答案)
-            </button>
-            <span v-if="showAnswer" class="answer-shown">
-              答案:{{ current.romaji }}
-              <button class="primary small" @click="next">下一個</button>
-            </span>
-          </div>
-        </div>
-        <div v-else class="empty">
-          <p>沒有可練習的字了 — 請開啟某個字母系統或重設進度。</p>
-        </div>
-      </section>
     </main>
   </div>
 </template>
@@ -1825,6 +1493,16 @@ const examCountdown = computed(() => {
 .card-flag.red { color: var(--bad); }
 .card-flag.yellow { color: #f5a623; }
 .card-flag.green { color: var(--good); }
+.pool-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+}
+.pool-tag.pool-bottom { color: var(--bad); border-color: var(--bad); }
+.pool-tag.pool-top { color: var(--good); border-color: var(--good); }
+.pool-tag.pool-mid { color: var(--muted); }
 
 .hero-actions {
   display: flex;
