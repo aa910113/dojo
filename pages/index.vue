@@ -362,24 +362,6 @@ const cardStatsMap = computed<Map<string, CardStat>>(() => {
   return map
 })
 
-const selectedCardId = ref<string | null>(null)
-const selectedCardDetail = computed(() => {
-  if (!selectedCardId.value) return null
-  const entry = ALL_KANA.find((k) => k.id === selectedCardId.value)
-  if (!entry) return null
-  const stat = cardStatsMap.value.get(entry.id)
-  if (!stat) return null
-  return { entry, stat }
-})
-
-function selectCard(id: string) {
-  selectedCardId.value = selectedCardId.value === id ? null : id
-}
-
-function poolLabel(pool: PoolGroup): string {
-  return pool === 'bottom' ? 'Bottom 6' : pool === 'top' ? '≥90%' : pool === 'mid' ? '中段' : '未學'
-}
-
 const katakanaGrid = computed(() => buildGrid('katakana'))
 
 function fmtMin(seconds: number) {
@@ -536,28 +518,36 @@ const examCountdown = computed(() => {
           <span class="pool-tag pool-unintroduced">未學</span>
         </div>
 
-        <div class="kana-grids-row">
+        <div class="kana-grids-stack">
           <div class="kana-grid-block">
             <h4>平假名</h4>
             <div class="kana-grid">
               <div v-for="(row, ri) in hiraganaGrid" :key="'h' + ri" class="kana-grid-row">
-                <button
+                <div
                   v-for="(cell, ci) in row"
                   :key="ci"
                   class="kana-grid-cell"
                   :class="cell.entry
-                    ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced'),
-                       { selected: cell.entry.id === selectedCardId }]
+                    ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced')]
                     : ['empty']"
-                  :disabled="!cell.entry"
                   :title="cell.entry ? cell.entry.char + ' ' + cell.entry.romaji : ''"
-                  @click="cell.entry && selectCard(cell.entry.id)"
                 >
                   <template v-if="cell.entry">
-                    <span class="cell-char">{{ cell.entry.char }}</span>
-                    <span class="cell-romaji">{{ cell.entry.romaji }}</span>
+                    <div class="cell-main">
+                      <span class="cell-char">{{ cell.entry.char }}</span>
+                      <span class="cell-romaji">{{ cell.entry.romaji }}</span>
+                    </div>
+                    <div
+                      v-if="cardStatsMap.get(cell.entry.id)?.introduced"
+                      class="cell-stats"
+                    >
+                      <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
+                      <span class="cell-stat">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
+                      <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                    </div>
+                    <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
-                </button>
+                </div>
               </div>
             </div>
           </div>
@@ -566,45 +556,34 @@ const examCountdown = computed(() => {
             <h4>片假名</h4>
             <div class="kana-grid">
               <div v-for="(row, ri) in katakanaGrid" :key="'k' + ri" class="kana-grid-row">
-                <button
+                <div
                   v-for="(cell, ci) in row"
                   :key="ci"
                   class="kana-grid-cell"
                   :class="cell.entry
-                    ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced'),
-                       { selected: cell.entry.id === selectedCardId }]
+                    ? ['pool-' + (cardStatsMap.get(cell.entry.id)?.pool ?? 'unintroduced')]
                     : ['empty']"
-                  :disabled="!cell.entry"
                   :title="cell.entry ? cell.entry.char + ' ' + cell.entry.romaji : ''"
-                  @click="cell.entry && selectCard(cell.entry.id)"
                 >
                   <template v-if="cell.entry">
-                    <span class="cell-char">{{ cell.entry.char }}</span>
-                    <span class="cell-romaji">{{ cell.entry.romaji }}</span>
+                    <div class="cell-main">
+                      <span class="cell-char">{{ cell.entry.char }}</span>
+                      <span class="cell-romaji">{{ cell.entry.romaji }}</span>
+                    </div>
+                    <div
+                      v-if="cardStatsMap.get(cell.entry.id)?.introduced"
+                      class="cell-stats"
+                    >
+                      <span class="cell-stat">練 {{ cardStatsMap.get(cell.entry.id)!.reps }}</span>
+                      <span class="cell-stat">{{ Math.round(cardStatsMap.get(cell.entry.id)!.accuracy * 100) }}%</span>
+                      <span class="cell-stat">失 {{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
+                    </div>
+                    <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
-                </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        <div v-if="selectedCardDetail" class="card-detail-panel">
-          <div class="card-detail-head">
-            <span class="card-detail-char">{{ selectedCardDetail.entry.char }}</span>
-            <span class="card-detail-romaji">{{ selectedCardDetail.entry.romaji }}</span>
-            <span class="pool-tag" :class="'pool-' + selectedCardDetail.stat.pool">
-              {{ poolLabel(selectedCardDetail.stat.pool) }}
-            </span>
-            <button class="btn-ghost small" @click="selectedCardId = null">關閉</button>
-          </div>
-          <div class="card-detail-stats">
-            <span><strong>練習</strong> {{ selectedCardDetail.stat.reps }}</span>
-            <span><strong>準確率</strong> {{ selectedCardDetail.stat.reps > 0 ? Math.round(selectedCardDetail.stat.accuracy * 100) + '%' : '—' }}</span>
-            <span><strong>失誤</strong> {{ selectedCardDetail.stat.lapses }}</span>
-          </div>
-        </div>
-        <div v-else-if="cardStatsMap.size > 0" class="card-detail-hint muted">
-          點任一字看詳情
         </div>
 
         <h4>每日活動</h4>
@@ -1340,11 +1319,10 @@ const examCountdown = computed(() => {
   margin: 8px 0 12px;
 }
 
-.kana-grids-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  align-items: start;
+.kana-grids-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 .kana-grid-block {
   min-width: 0;
@@ -1352,85 +1330,70 @@ const examCountdown = computed(() => {
 .kana-grid {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 .kana-grid-row {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  gap: 6px;
 }
 .kana-grid-cell {
-  aspect-ratio: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  border: 1px solid var(--border);
   background: var(--panel);
   font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
   color: var(--text);
-  cursor: pointer;
-  padding: 0;
-  line-height: 1;
-  transition: transform 0.1s ease, border-color 0.1s ease;
+  padding: 8px 4px;
+  min-height: 78px;
+  line-height: 1.1;
+  gap: 6px;
 }
-.kana-grid-cell:not(:disabled):hover { transform: scale(1.06); }
-.kana-grid-cell .cell-char { font-size: 20px; }
-.kana-grid-cell .cell-romaji { font-size: 9px; color: var(--muted); margin-top: 2px; }
+.kana-grid-cell .cell-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.kana-grid-cell .cell-char { font-size: 22px; font-weight: 600; }
+.kana-grid-cell .cell-romaji { font-size: 10px; color: var(--muted); }
+.kana-grid-cell .cell-stats {
+  display: flex;
+  gap: 4px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.kana-grid-cell .cell-stat { opacity: 0.95; }
 .kana-grid-cell.empty {
   background: transparent;
   border-color: transparent;
-  cursor: default;
 }
-.kana-grid-cell.pool-bottom { border-color: var(--bad); }
-.kana-grid-cell.pool-top { border-color: var(--good); }
-.kana-grid-cell.pool-mid { /* default border */ }
-.kana-grid-cell.pool-unintroduced { opacity: 0.35; }
-.kana-grid-cell.pool-unintroduced .cell-romaji { color: var(--muted); }
-.kana-grid-cell.selected {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.kana-grid-cell.pool-bottom {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.55);
 }
-
-.card-detail-panel {
-  margin-top: 16px;
-  padding: 12px 14px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+.kana-grid-cell.pool-bottom .cell-stats { color: rgba(255, 200, 200, 0.95); }
+.kana-grid-cell.pool-top {
+  background: rgba(34, 197, 94, 0.22);
+  border-color: rgba(34, 197, 94, 0.55);
 }
-.card-detail-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
+.kana-grid-cell.pool-top .cell-stats { color: rgba(200, 240, 210, 0.95); }
+.kana-grid-cell.pool-mid {
+  background: rgba(255, 255, 255, 0.04);
 }
-.card-detail-char {
-  font-size: 28px;
-  font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
+.kana-grid-cell.pool-unintroduced {
+  background: transparent;
+  border-style: dashed;
+  opacity: 0.45;
 }
-.card-detail-romaji {
-  font-size: 14px;
+.kana-grid-cell.pool-unintroduced .cell-stats-unintroduced {
+  font-size: 10px;
   color: var(--muted);
-}
-.card-detail-head .btn-ghost { margin-left: auto; }
-.card-detail-stats {
-  display: flex;
-  gap: 18px;
-  font-size: 13px;
-  flex-wrap: wrap;
-}
-.card-detail-stats strong {
-  color: var(--muted);
-  font-weight: 500;
-  margin-right: 4px;
-}
-.card-detail-hint {
-  margin-top: 12px;
-  font-size: 12px;
-  text-align: center;
 }
 
 .cal-wrap { margin-bottom: 8px; }
@@ -1564,9 +1527,10 @@ const examCountdown = computed(() => {
   .topbar-stats { gap: 6px; }
   .chip { padding: 4px 8px; }
   .chip-val { font-size: 12px; }
-  .kana-grid-cell .cell-char { font-size: 16px; }
-  .kana-grid-cell .cell-romaji { font-size: 8px; }
-  .kana-grids-row { grid-template-columns: 1fr; }
+  .kana-grid-cell { padding: 6px 2px; min-height: 64px; }
+  .kana-grid-cell .cell-char { font-size: 18px; }
+  .kana-grid-cell .cell-romaji { font-size: 9px; }
+  .kana-grid-cell .cell-stats { font-size: 8px; gap: 3px; }
   .history-table { font-size: 12px; }
   .history-table th,
   .history-table td { padding: 6px 4px; }
