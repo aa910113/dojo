@@ -1623,6 +1623,28 @@ const examCountdown = computed(() => {
     font-size: 10px;
   }
   .kana-grid-cell .stat-num { min-width: 2em; }
+  /* 進度條改成由下往上填,跟直立格子方向一致 */
+  .kana-grid-cell.pool-bottom {
+    background: linear-gradient(
+      to top,
+      rgba(239, 68, 68, 0.30) var(--acc-pct),
+      transparent var(--acc-pct)
+    );
+  }
+  .kana-grid-cell.pool-top {
+    background: linear-gradient(
+      to top,
+      rgba(34, 197, 94, 0.30) var(--acc-pct),
+      transparent var(--acc-pct)
+    );
+  }
+  .kana-grid-cell.pool-mid {
+    background: linear-gradient(
+      to top,
+      rgba(125, 211, 252, 0.18) var(--acc-pct),
+      transparent var(--acc-pct)
+    );
+  }
   .history-table { font-size: 12px; }
   .history-table th,
   .history-table td { padding: 6px 4px; }
