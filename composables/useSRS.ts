@@ -176,6 +176,8 @@ export const useSRS = () => {
   const focusQueue = useState<string[]>('srs-focus-queue', () => [])
   const focusInitialSize = useState<number>('srs-focus-initial', () => 0)
   const focusCorrectCount = useState<number>('srs-focus-correct', () => 0)
+  // 每張卡需累計幾次答對才出隊
+  const focusCorrectMap = useState<Record<string, number>>('srs-focus-correct-map', () => ({}))
 
   function save() {
     if (typeof window === 'undefined') return
@@ -600,11 +602,14 @@ export const useSRS = () => {
     return pool
   }
 
+  const FOCUS_NEEDED_CORRECT = 3
+
   function startFocusSession(): number {
     const pool = buildFocusPool()
     focusQueue.value = pool
     focusInitialSize.value = pool.length
     focusCorrectCount.value = 0
+    focusCorrectMap.value = {}
     return pool.length
   }
 
@@ -614,21 +619,32 @@ export const useSRS = () => {
     return ALL_KANA.find((k) => k.id === id) ?? null
   }
 
-  // 答對 → 從池移除;答錯 → 移到隊尾(會循環回來再試)
+  // 答對 → 累計次數,達 FOCUS_NEEDED_CORRECT 才出隊;答錯 → 送回隊尾(進度不歸零)
   function focusAnswer(id: string, correct: boolean) {
     if (focusQueue.value[0] !== id) return
     if (correct) {
-      focusQueue.value = focusQueue.value.slice(1)
-      focusCorrectCount.value += 1
+      const next = (focusCorrectMap.value[id] ?? 0) + 1
+      focusCorrectMap.value = { ...focusCorrectMap.value, [id]: next }
+      if (next >= FOCUS_NEEDED_CORRECT) {
+        focusQueue.value = focusQueue.value.slice(1)
+        focusCorrectCount.value += 1
+      } else {
+        focusQueue.value = [...focusQueue.value.slice(1), id]
+      }
     } else {
       focusQueue.value = [...focusQueue.value.slice(1), id]
     }
+  }
+
+  function focusProgressFor(id: string): { done: number; needed: number } {
+    return { done: focusCorrectMap.value[id] ?? 0, needed: FOCUS_NEEDED_CORRECT }
   }
 
   function endFocusSession() {
     focusQueue.value = []
     focusInitialSize.value = 0
     focusCorrectCount.value = 0
+    focusCorrectMap.value = {}
   }
 
   return {
@@ -665,5 +681,6 @@ export const useSRS = () => {
     pickFocusCard,
     focusAnswer,
     endFocusSession,
+    focusProgressFor,
   }
 }

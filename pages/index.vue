@@ -2,7 +2,7 @@
 import type { KanaEntry } from '~/data/kana'
 import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -846,6 +846,14 @@ const examCountdown = computed(() => {
               {{ current.script === 'hiragana' ? '平假名' : '片假名' }}
             </span>
             <span class="learn-tag">重點</span>
+            <span class="focus-progress-dots" :title="`已對 ${focusProgressFor(current.id).done}/${focusProgressFor(current.id).needed} 次`">
+              <span
+                v-for="i in focusProgressFor(current.id).needed"
+                :key="i"
+                class="focus-dot"
+                :class="{ filled: i <= focusProgressFor(current.id).done }"
+              >●</span>
+            </span>
           </div>
           <input
             ref="inputEl"
@@ -1202,6 +1210,15 @@ const examCountdown = computed(() => {
   border-radius: 999px;
   font-weight: 600;
 }
+.focus-progress-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 4px;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+.focus-dot { color: var(--border); transition: color 0.2s; }
+.focus-dot.filled { color: var(--accent); }
 .learn-hint {
   background: rgba(125, 211, 252, 0.08);
   border: 1px dashed rgba(125, 211, 252, 0.4);
