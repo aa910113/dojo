@@ -1605,24 +1605,24 @@ const examCountdown = computed(() => {
   .topbar-stats { gap: 6px; }
   .chip { padding: 4px 8px; }
   .chip-val { font-size: 12px; }
-  /* 手機格子太窄 → 改成垂直排:假名上、stats 橫排在下 */
+  /* 手機格子太窄 → 改成垂直排:假名上、stats 一樣直排但放在下面 */
   .kana-grid-cell {
     flex-direction: column;
     justify-content: center;
     padding: 6px 4px;
-    min-height: 84px;
+    min-height: 100px;
     gap: 4px;
   }
   .kana-grid-cell .cell-main { align-items: center; }
   .kana-grid-cell .cell-char { font-size: 24px; }
   .kana-grid-cell .cell-romaji { font-size: 11px; }
   .kana-grid-cell .cell-stats {
-    flex-direction: row;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: 2px;
     font-size: 10px;
   }
-  .kana-grid-cell .stat-num { min-width: 1.6em; }
+  .kana-grid-cell .stat-num { min-width: 2em; }
   .history-table { font-size: 12px; }
   .history-table th,
   .history-table td { padding: 6px 4px; }
