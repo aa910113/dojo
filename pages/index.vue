@@ -261,6 +261,10 @@ function speak(text: string) {
   if (synth.paused) synth.resume()
 }
 
+function playCurrent() {
+  if (current.value) speak(current.value.char)
+}
+
 let speechKeepAlive: number | null = null
 
 onMounted(() => {
@@ -840,6 +844,14 @@ const examCountdown = computed(() => {
         <div v-if="current" class="card" :data-state="feedback">
           <div class="kana-row">
             <div class="kana">{{ current.char }}</div>
+            <button
+              v-if="ttsSupported"
+              class="speak-btn"
+              :title="settings.autoPlaySound ? '播放讀音' : '播放讀音 (自動播放已關)'"
+              @click="playCurrent"
+            >
+              🔊
+            </button>
           </div>
           <div class="tag-row">
             <span class="script-tag">
