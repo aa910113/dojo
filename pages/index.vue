@@ -2,7 +2,7 @@
 import type { KanaEntry } from '~/data/kana'
 import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -52,6 +52,73 @@ function finishFocus() {
   current.value = null
   input.value = ''
 }
+
+const testFinished = ref(false)
+const testActive = computed(() => testQueue.value.length > 0 || testFinished.value)
+const testAnswered = computed(() => testCorrectIds.value.length + testWrongIds.value.length)
+
+function next_test_card_or_finish() {
+  const card = pickTestCard()
+  if (!card) {
+    testFinished.value = true
+    current.value = null
+    flushCloud()
+    return
+  }
+  current.value = card
+  input.value = ''
+  feedback.value = 'idle'
+  firstTry.value = true
+  wrongCount.value = 0
+  showAnswer.value = false
+  locked.value = false
+  nextTick(() => inputEl.value?.focus())
+}
+
+function startTest() {
+  sessionStarted.value = true
+  sessionCorrect.value = 0
+  sessionWrong.value = 0
+  resetSessionLapses()
+  testFinished.value = false
+  const n = startTestSession()
+  if (n === 0) {
+    alert('還沒有可測驗的字 — 請先學一些字')
+    sessionStarted.value = false
+    return
+  }
+  next_test_card_or_finish()
+}
+
+function finishTest() {
+  endTestSession()
+  testFinished.value = false
+  sessionStarted.value = false
+  current.value = null
+  input.value = ''
+}
+
+function skipTestCard() {
+  if (!current.value) return
+  // 點「我不會」= 直接記錯,送下一張
+  feedback.value = 'bad'
+  review(current.value.id, false, false)
+  sessionWrong.value += 1
+  testAnswer(current.value.id, false)
+  locked.value = true
+  setTimeout(() => next_test_card_or_finish(), 500)
+}
+
+const testWrongCards = computed(() =>
+  testWrongIds.value
+    .map((id) => ALL_KANA.find((k) => k.id === id))
+    .filter((k): k is KanaEntry => !!k),
+)
+const testCorrectCards = computed(() =>
+  testCorrectIds.value
+    .map((id) => ALL_KANA.find((k) => k.id === id))
+    .filter((k): k is KanaEntry => !!k),
+)
 
 const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
 
@@ -172,6 +239,30 @@ function checkAnswer(value: string) {
   const accepts = current.value.accepts
   const exact = accepts.includes(cleaned)
   const partialMatch = accepts.some((a) => a.startsWith(cleaned))
+
+  // === 測驗模式 ===
+  if (testActive.value && !testFinished.value) {
+    if (exact) {
+      feedback.value = 'good'
+      locked.value = true
+      review(current.value.id, true, firstTry.value)
+      sessionCorrect.value += 1
+      testAnswer(current.value.id, true)
+      if (settings.value.autoPlaySound) speak(current.value.char)
+      setTimeout(() => next_test_card_or_finish(), 500)
+      return
+    }
+    const longestT = Math.max(...accepts.map((a) => a.length))
+    if (!partialMatch || cleaned.length >= longestT) {
+      feedback.value = 'bad'
+      locked.value = true
+      review(current.value.id, false, false)
+      sessionWrong.value += 1
+      testAnswer(current.value.id, false)
+      setTimeout(() => next_test_card_or_finish(), 700)
+    }
+    return
+  }
 
   // === 重點練習模式 ===
   if (focusActive.value && !focusFinished.value) {
@@ -826,7 +917,84 @@ const examCountdown = computed(() => {
             <div class="hero-stat-label">未學</div>
           </div>
         </div>
-        <button class="primary big" @click="startFocus">重點練習</button>
+        <div class="hero-actions">
+          <button class="primary big" @click="startFocus">重點練習</button>
+          <button class="btn-ghost big" @click="startTest">測驗</button>
+        </div>
+      </section>
+
+      <section v-else-if="testActive && !testFinished" class="panel session test-panel">
+        <div class="session-bar">
+          <div class="quiz-title">測驗</div>
+          <div class="session-meta">
+            <span class="ok">✓ {{ testCorrectIds.length }}</span>
+            <span class="ng">✗ {{ testWrongIds.length }}</span>
+            <span class="muted">{{ testAnswered }} / {{ testTotal }}</span>
+          </div>
+          <button class="btn-ghost" @click="finishTest">結束</button>
+        </div>
+        <div class="quiz-hint muted">每張只問一次,答對 streak +1,答錯歸零</div>
+        <div v-if="current" class="card" :data-state="feedback">
+          <div class="kana-row">
+            <div class="kana">{{ current.char }}</div>
+            <button
+              v-if="ttsSupported"
+              class="speak-btn"
+              :title="'播放讀音'"
+              @click="playCurrent"
+            >🔊</button>
+          </div>
+          <div class="tag-row">
+            <span class="script-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="learn-tag">測驗</span>
+          </div>
+          <input
+            ref="inputEl"
+            v-model="input"
+            class="answer-input"
+            :class="{ good: feedback === 'good', bad: feedback === 'bad' }"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            placeholder="輸入羅馬字"
+            @keydown.enter.prevent="checkAnswer(input)"
+          />
+          <div class="hint-row">
+            <button class="btn-ghost small" @click="skipTestCard">我不會</button>
+          </div>
+        </div>
+      </section>
+
+      <section v-else-if="testFinished" class="panel session test-done-panel">
+        <h3>📝 測驗結果</h3>
+        <div class="quiz-summary-row">
+          <span class="ok">對 {{ testCorrectIds.length }}</span>
+          <span class="ng">錯 {{ testWrongIds.length }}</span>
+          <span class="muted">共 {{ testTotal }} 張</span>
+        </div>
+        <div v-if="testWrongCards.length > 0" class="quiz-failed-list">
+          <div class="quiz-failed-label muted">忘記的字 ({{ testWrongCards.length }})</div>
+          <div class="quiz-failed-chips">
+            <span v-for="k in testWrongCards" :key="k.id" class="quiz-failed-chip">
+              {{ k.char }}
+              <span class="quiz-failed-romaji">{{ k.romaji }}</span>
+            </span>
+          </div>
+        </div>
+        <div v-if="testCorrectCards.length > 0" class="quiz-failed-list">
+          <div class="quiz-failed-label muted">答對的字 ({{ testCorrectCards.length }})</div>
+          <div class="quiz-failed-chips">
+            <span v-for="k in testCorrectCards" :key="k.id" class="quiz-failed-chip quiz-correct-chip">
+              {{ k.char }}
+              <span class="quiz-failed-romaji">{{ k.romaji }}</span>
+            </span>
+          </div>
+        </div>
+        <p class="muted focus-done-note">
+          答錯的字 streak 已歸零,下次重點練習它們會回到 Bottom 6。
+        </p>
+        <button class="primary big" @click="finishTest">回到首頁</button>
       </section>
 
       <section v-else-if="focusActive && !focusFinished" class="panel session focus-panel">
@@ -1144,6 +1312,10 @@ const examCountdown = computed(() => {
 .quiz-failed-romaji {
   font-size: 11px;
   color: var(--muted);
+}
+.quiz-correct-chip {
+  border-color: rgba(34, 197, 94, 0.55) !important;
+  background: rgba(34, 197, 94, 0.10) !important;
 }
 .quiz-deferred-chip {
   border-color: var(--border);

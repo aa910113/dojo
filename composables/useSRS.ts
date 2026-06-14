@@ -186,6 +186,13 @@ export const useSRS = () => {
   // 每張卡需累計幾次答對才出隊
   const focusCorrectMap = useState<Record<string, number>>('srs-focus-correct-map', () => ({}))
 
+  // === 測驗(diagnostic) ===
+  // 一輪過,每張只問一次,結束顯示對 / 錯清單
+  const testQueue = useState<string[]>('srs-test-queue', () => [])
+  const testTotal = useState<number>('srs-test-total', () => 0)
+  const testCorrectIds = useState<string[]>('srs-test-correct-ids', () => [])
+  const testWrongIds = useState<string[]>('srs-test-wrong-ids', () => [])
+
   function save() {
     if (typeof window === 'undefined') return
     try {
@@ -667,6 +674,47 @@ export const useSRS = () => {
     focusCorrectMap.value = {}
   }
 
+  // === 測驗 ===
+  function startTestSession(): number {
+    const intro = activePool()
+      .filter((k) => persist.value.cards[k.id]?.introduced)
+      .map((k) => k.id)
+    // 洗牌出題
+    const queue = [...intro]
+    for (let i = queue.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[queue[i], queue[j]] = [queue[j], queue[i]]
+    }
+    testQueue.value = queue
+    testTotal.value = queue.length
+    testCorrectIds.value = []
+    testWrongIds.value = []
+    return queue.length
+  }
+
+  function pickTestCard(): KanaEntry | null {
+    const id = testQueue.value[0]
+    if (!id) return null
+    return ALL_KANA.find((k) => k.id === id) ?? null
+  }
+
+  function testAnswer(id: string, correct: boolean) {
+    if (testQueue.value[0] !== id) return
+    testQueue.value = testQueue.value.slice(1)
+    if (correct) {
+      testCorrectIds.value = [...testCorrectIds.value, id]
+    } else {
+      testWrongIds.value = [...testWrongIds.value, id]
+    }
+  }
+
+  function endTestSession() {
+    testQueue.value = []
+    testTotal.value = 0
+    testCorrectIds.value = []
+    testWrongIds.value = []
+  }
+
   return {
     settings,
     stats,
@@ -702,5 +750,13 @@ export const useSRS = () => {
     focusAnswer,
     endFocusSession,
     focusProgressFor,
+    testQueue,
+    testTotal,
+    testCorrectIds,
+    testWrongIds,
+    startTestSession,
+    pickTestCard,
+    testAnswer,
+    endTestSession,
   }
 }
