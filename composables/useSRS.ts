@@ -10,6 +10,9 @@ export interface CardState {
   correctTotal: number
   wrongTotal: number
   introduced: boolean
+  // 最近連續答對次數 (lapse / 答錯歸零) —— 給重點池用,
+  // 避免終身準確率因為過去太爛而被永久鎖在 bottom 6
+  correctStreak?: number
 }
 
 export interface Settings {
@@ -98,6 +101,9 @@ function sanitizeCard(c: CardState, now: number): CardState {
   if (c.dueAt > maxDue || !isFinite(c.dueAt)) {
     c.dueAt = maxDue
   }
+  if (typeof c.correctStreak !== 'number' || !isFinite(c.correctStreak)) {
+    c.correctStreak = 0
+  }
   return c
 }
 
@@ -112,6 +118,7 @@ function freshCard(id: string): CardState {
     correctTotal: 0,
     wrongTotal: 0,
     introduced: false,
+    correctStreak: 0,
   }
 }
 
@@ -420,6 +427,7 @@ export const useSRS = () => {
     if (correct && firstTry) {
       c.correctTotal += 1
       d.correct += 1
+      c.correctStreak = (c.correctStreak ?? 0) + 1
       if (c.intervalMin < 1) {
         c.intervalMin = 1
       } else if (c.intervalMin < 10) {
@@ -443,6 +451,7 @@ export const useSRS = () => {
       c.wrongTotal += 1
       d.wrong += 1
       c.lapses += 1
+      c.correctStreak = 0
       c.ease = Math.max(1.3, c.ease - 0.2)
       const sessionCount = (sessionLapses.value[id] ?? 0) + 1
       sessionLapses.value = { ...sessionLapses.value, [id]: sessionCount }
@@ -571,6 +580,11 @@ export const useSRS = () => {
     return 'ok'
   }
 
+  // 連對到此次數,該卡視為「最近已恢復」,即使終身準確率仍低也不再
+  // 占住 bottom 6 的位置 —— 讓其他真的還沒練到的字進得來。
+  // 答錯後 streak 歸零,如果又開始錯就會再被列為 bottom。
+  const FOCUS_STREAK_GRADUATE = 5
+
   // === 重點練習 ===
   // 取準確率最低的 N 張 + 全部 >=90% 的卡當這場的固定池。
   // 全部 >=90% 是刻意的:每張高分卡都要持續維持,任何一張掉下來就會跑進下次的 bottom。
@@ -580,13 +594,19 @@ export const useSRS = () => {
         const c = persist.value.cards[k.id]
         if (!c?.introduced) return null
         const acc = c.reps > 0 ? c.correctTotal / c.reps : 1
-        return { id: k.id, acc, reps: c.reps }
+        return { id: k.id, acc, reps: c.reps, streak: c.correctStreak ?? 0 }
       })
-      .filter((x): x is { id: string; acc: number; reps: number } => x !== null)
+      .filter(
+        (x): x is { id: string; acc: number; reps: number; streak: number } => x !== null,
+      )
 
     if (intro.length === 0) return []
 
-    const sortedByAccAsc = [...intro].sort((a, b) => a.acc - b.acc || b.reps - a.reps)
+    // bottom 池只看「最近還在卡關」的卡 —— streak 超過門檻先放生
+    const stillStuck = intro.filter((x) => x.streak < FOCUS_STREAK_GRADUATE)
+    const sortedByAccAsc = [...stillStuck].sort(
+      (a, b) => a.acc - b.acc || b.reps - a.reps,
+    )
     const bottom = sortedByAccAsc.slice(0, bottomN).map((x) => x.id)
     const bottomSet = new Set(bottom)
     const top = intro
