@@ -193,6 +193,16 @@ export const useSRS = () => {
   const testCorrectIds = useState<string[]>('srs-test-correct-ids', () => [])
   const testWrongIds = useState<string[]>('srs-test-wrong-ids', () => [])
 
+  // === Bottom 6 衝刺 ===
+  // 只練最低準確率的 6 張,洗牌循環,跑滿時間結束
+  const drillPool = useState<string[]>('srs-drill-pool', () => [])
+  const drillQueue = useState<string[]>('srs-drill-queue', () => [])
+  const drillSecondsLeft = useState<number>('srs-drill-seconds', () => 0)
+  const drillStats = useState<Record<string, { correct: number; wrong: number }>>(
+    'srs-drill-stats',
+    () => ({}),
+  )
+
   function save() {
     if (typeof window === 'undefined') return
     try {
@@ -715,6 +725,63 @@ export const useSRS = () => {
     testWrongIds.value = []
   }
 
+  // === Bottom 6 衝刺 ===
+  // 注意:這裡的 bottom 不套用 streak-graduate 規則 —— 使用者明確要練「最差的 6 張」
+  function startDrillSession(seconds = 600, n = 6): number {
+    const intro = activePool()
+      .map((k) => {
+        const c = persist.value.cards[k.id]
+        if (!c?.introduced) return null
+        const acc = c.reps > 0 ? c.correctTotal / c.reps : 1
+        return { id: k.id, acc, reps: c.reps }
+      })
+      .filter((x): x is { id: string; acc: number; reps: number } => x !== null)
+
+    if (intro.length === 0) return 0
+
+    const sorted = intro.sort((a, b) => a.acc - b.acc || b.reps - a.reps)
+    const pool = sorted.slice(0, n).map((x) => x.id)
+    drillPool.value = pool
+    drillQueue.value = [...pool].sort(() => Math.random() - 0.5)
+    drillSecondsLeft.value = seconds
+    drillStats.value = Object.fromEntries(pool.map((id) => [id, { correct: 0, wrong: 0 }]))
+    return pool.length
+  }
+
+  function pickDrillCard(): KanaEntry | null {
+    if (drillQueue.value.length === 0 && drillPool.value.length > 0) {
+      // 隊伍空了 → 重新洗牌再來一輪
+      drillQueue.value = [...drillPool.value].sort(() => Math.random() - 0.5)
+    }
+    const id = drillQueue.value[0]
+    if (!id) return null
+    return ALL_KANA.find((k) => k.id === id) ?? null
+  }
+
+  function drillAnswer(id: string, correct: boolean) {
+    if (drillQueue.value[0] !== id) return
+    drillQueue.value = drillQueue.value.slice(1)
+    const cur = drillStats.value[id] ?? { correct: 0, wrong: 0 }
+    drillStats.value = {
+      ...drillStats.value,
+      [id]: correct
+        ? { ...cur, correct: cur.correct + 1 }
+        : { ...cur, wrong: cur.wrong + 1 },
+    }
+  }
+
+  function tickDrill(delta: number): boolean {
+    drillSecondsLeft.value = Math.max(0, drillSecondsLeft.value - delta)
+    return drillSecondsLeft.value === 0
+  }
+
+  function endDrillSession() {
+    drillPool.value = []
+    drillQueue.value = []
+    drillSecondsLeft.value = 0
+    drillStats.value = {}
+  }
+
   return {
     settings,
     stats,
@@ -758,5 +825,14 @@ export const useSRS = () => {
     pickTestCard,
     testAnswer,
     endTestSession,
+    drillPool,
+    drillQueue,
+    drillSecondsLeft,
+    drillStats,
+    startDrillSession,
+    pickDrillCard,
+    drillAnswer,
+    tickDrill,
+    endDrillSession,
   }
 }

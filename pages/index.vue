@@ -2,7 +2,7 @@
 import type { KanaEntry } from '~/data/kana'
 import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -119,6 +119,115 @@ const testCorrectCards = computed(() =>
     .map((id) => ALL_KANA.find((k) => k.id === id))
     .filter((k): k is KanaEntry => !!k),
 )
+
+const drillFinished = ref(false)
+const drillActive = computed(() => drillPool.value.length > 0 || drillFinished.value)
+let drillTimerHandle: number | null = null
+let drillLastTickAt = 0
+
+const drillTimeText = computed(() => {
+  const s = drillSecondsLeft.value
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}:${String(r).padStart(2, '0')}`
+})
+
+const drillPoolCards = computed(() =>
+  drillPool.value
+    .map((id) => ALL_KANA.find((k) => k.id === id))
+    .filter((k): k is KanaEntry => !!k),
+)
+
+function next_drill_card_or_finish() {
+  if (drillSecondsLeft.value === 0) {
+    drillFinished.value = true
+    current.value = null
+    if (drillTimerHandle != null) {
+      clearInterval(drillTimerHandle)
+      drillTimerHandle = null
+    }
+    flushCloud()
+    return
+  }
+  const card = pickDrillCard()
+  if (!card) {
+    drillFinished.value = true
+    current.value = null
+    flushCloud()
+    return
+  }
+  current.value = card
+  input.value = ''
+  feedback.value = 'idle'
+  firstTry.value = true
+  wrongCount.value = 0
+  showAnswer.value = false
+  locked.value = false
+  nextTick(() => inputEl.value?.focus())
+}
+
+function startDrill() {
+  sessionStarted.value = true
+  sessionCorrect.value = 0
+  sessionWrong.value = 0
+  resetSessionLapses()
+  drillFinished.value = false
+  const n = startDrillSession(600, 6)
+  if (n === 0) {
+    alert('還沒有可衝刺的字 — 請先學一些字')
+    sessionStarted.value = false
+    return
+  }
+  drillLastTickAt = Date.now()
+  drillTimerHandle = window.setInterval(() => {
+    const now = Date.now()
+    const delta = Math.round((now - drillLastTickAt) / 1000)
+    drillLastTickAt = now
+    if (delta <= 0) return
+    const done = tickDrill(delta)
+    if (done && !drillFinished.value) {
+      // 時間到 → 收尾。若使用者正在打字,讓他的下一個 enter 自動結束。
+      // 這裡僅停 interval,主結束流程交給 next_drill_card_or_finish。
+      if (drillTimerHandle != null) {
+        clearInterval(drillTimerHandle)
+        drillTimerHandle = null
+      }
+      // 若目前沒有 lock(沒有正在收 setTimeout),直接收尾
+      if (!locked.value) {
+        drillFinished.value = true
+        current.value = null
+        flushCloud()
+      }
+    }
+  }, 1000)
+  next_drill_card_or_finish()
+}
+
+function finishDrill() {
+  if (drillTimerHandle != null) {
+    clearInterval(drillTimerHandle)
+    drillTimerHandle = null
+  }
+  endDrillSession()
+  drillFinished.value = false
+  sessionStarted.value = false
+  current.value = null
+  input.value = ''
+}
+
+function skipDrillCard() {
+  if (!current.value) return
+  feedback.value = 'bad'
+  review(current.value.id, false, false)
+  sessionWrong.value += 1
+  drillAnswer(current.value.id, false)
+  locked.value = true
+  setTimeout(() => next_drill_card_or_finish(), 500)
+}
+
+onBeforeUnmount(() => {
+  if (drillTimerHandle != null) clearInterval(drillTimerHandle)
+})
 
 const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
 
@@ -239,6 +348,30 @@ function checkAnswer(value: string) {
   const accepts = current.value.accepts
   const exact = accepts.includes(cleaned)
   const partialMatch = accepts.some((a) => a.startsWith(cleaned))
+
+  // === Bottom 6 衝刺模式 ===
+  if (drillActive.value && !drillFinished.value) {
+    if (exact) {
+      feedback.value = 'good'
+      locked.value = true
+      review(current.value.id, true, firstTry.value)
+      sessionCorrect.value += 1
+      drillAnswer(current.value.id, true)
+      if (settings.value.autoPlaySound) speak(current.value.char)
+      setTimeout(() => next_drill_card_or_finish(), 400)
+      return
+    }
+    const longestD = Math.max(...accepts.map((a) => a.length))
+    if (!partialMatch || cleaned.length >= longestD) {
+      feedback.value = 'bad'
+      locked.value = true
+      review(current.value.id, false, false)
+      sessionWrong.value += 1
+      drillAnswer(current.value.id, false)
+      setTimeout(() => next_drill_card_or_finish(), 600)
+    }
+    return
+  }
 
   // === 測驗模式 ===
   if (testActive.value && !testFinished.value) {
@@ -920,7 +1053,74 @@ const examCountdown = computed(() => {
         <div class="hero-actions">
           <button class="primary big" @click="startFocus">重點練習</button>
           <button class="btn-ghost big" @click="startTest">測驗</button>
+          <button class="btn-ghost big" @click="startDrill">Bottom 6 衝刺 (10 分鐘)</button>
         </div>
+      </section>
+
+      <section v-else-if="drillActive && !drillFinished" class="panel session drill-panel">
+        <div class="session-bar">
+          <div class="quiz-title">Bottom 6 衝刺</div>
+          <div class="session-meta">
+            <span class="timer" :class="{ low: drillSecondsLeft <= 60 }">{{ drillTimeText }}</span>
+            <span class="ok">✓ {{ sessionCorrect }}</span>
+            <span class="ng">✗ {{ sessionWrong }}</span>
+          </div>
+          <button class="btn-ghost" @click="finishDrill">結束</button>
+        </div>
+        <div class="quiz-hint muted">只練最低準確率的 6 張,洗牌循環直到時間到</div>
+        <div v-if="current" class="card" :data-state="feedback">
+          <div class="kana-row">
+            <div class="kana">{{ current.char }}</div>
+            <button
+              v-if="ttsSupported"
+              class="speak-btn"
+              title="播放讀音"
+              @click="playCurrent"
+            >🔊</button>
+          </div>
+          <div class="tag-row">
+            <span class="script-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="learn-tag">衝刺</span>
+          </div>
+          <input
+            ref="inputEl"
+            v-model="input"
+            class="answer-input"
+            :class="{ good: feedback === 'good', bad: feedback === 'bad' }"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            placeholder="輸入羅馬字"
+            @keydown.enter.prevent="checkAnswer(input)"
+          />
+          <div class="hint-row">
+            <button class="btn-ghost small" @click="skipDrillCard">我不會</button>
+          </div>
+        </div>
+      </section>
+
+      <section v-else-if="drillFinished" class="panel session drill-done-panel">
+        <h3>⏱ 衝刺結束</h3>
+        <div class="quiz-summary-row">
+          <span class="ok">對 {{ sessionCorrect }}</span>
+          <span class="ng">錯 {{ sessionWrong }}</span>
+        </div>
+        <div class="drill-summary-list">
+          <div
+            v-for="k in drillPoolCards"
+            :key="k.id"
+            class="drill-summary-row"
+          >
+            <span class="drill-summary-char">{{ k.char }}</span>
+            <span class="drill-summary-romaji">{{ k.romaji }}</span>
+            <span class="drill-summary-stats">
+              <span class="ok">✓ {{ drillStats[k.id]?.correct ?? 0 }}</span>
+              <span class="ng">✗ {{ drillStats[k.id]?.wrong ?? 0 }}</span>
+            </span>
+          </div>
+        </div>
+        <button class="primary big" @click="finishDrill">回到首頁</button>
       </section>
 
       <section v-else-if="testActive && !testFinished" class="panel session test-panel">
@@ -1317,6 +1517,43 @@ const examCountdown = computed(() => {
   border-color: rgba(34, 197, 94, 0.55) !important;
   background: rgba(34, 197, 94, 0.10) !important;
 }
+.drill-summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0 24px;
+}
+.drill-summary-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.drill-summary-char {
+  font-size: 22px;
+  font-weight: 600;
+  min-width: 1.8em;
+}
+.drill-summary-romaji {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+}
+.drill-summary-stats {
+  display: flex;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.session-meta .timer {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.session-meta .timer.low { color: var(--bad); }
 .quiz-deferred-chip {
   border-color: var(--border);
   background: transparent;
