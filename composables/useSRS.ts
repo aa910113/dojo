@@ -13,6 +13,9 @@ export interface CardState {
   // 最近連續答對次數 (lapse / 答錯歸零) —— 給重點池用,
   // 避免終身準確率因為過去太爛而被永久鎖在 bottom 6
   correctStreak?: number
+  // 最近 N 次答題結果 (true = 對, false = 錯),用來算「最近準確率」
+  // 終身準確率有歷史包袱,recent window 才能反映「現在會不會」
+  recentResults?: boolean[]
 }
 
 export interface Settings {
@@ -93,6 +96,9 @@ function fuzzInterval(min: number): number {
   return Math.min(MAX_INTERVAL_MIN, Math.max(60 * 24, Math.round(capped * factor)))
 }
 
+const RECENT_RESULTS_WINDOW = 15
+const RECENT_MIN_SAMPLES = 8
+
 function sanitizeCard(c: CardState, now: number): CardState {
   const maxDue = now + MAX_INTERVAL_MIN * 60 * 1000
   if (c.intervalMin > MAX_INTERVAL_MIN || !isFinite(c.intervalMin)) {
@@ -104,7 +110,21 @@ function sanitizeCard(c: CardState, now: number): CardState {
   if (typeof c.correctStreak !== 'number' || !isFinite(c.correctStreak)) {
     c.correctStreak = 0
   }
+  if (!Array.isArray(c.recentResults)) {
+    c.recentResults = []
+  } else if (c.recentResults.length > RECENT_RESULTS_WINDOW) {
+    c.recentResults = c.recentResults.slice(-RECENT_RESULTS_WINDOW)
+  }
   return c
+}
+
+// 有足夠最近樣本就用最近準確率,否則用終身。recent window 反映「現在會不會」
+function effectiveAccuracy(c: CardState): number {
+  const recent = c.recentResults ?? []
+  if (recent.length >= RECENT_MIN_SAMPLES) {
+    return recent.filter((r) => r).length / recent.length
+  }
+  return c.reps > 0 ? c.correctTotal / c.reps : 1
 }
 
 function freshCard(id: string): CardState {
@@ -119,6 +139,7 @@ function freshCard(id: string): CardState {
     wrongTotal: 0,
     introduced: false,
     correctStreak: 0,
+    recentResults: [],
   }
 }
 
@@ -441,6 +462,12 @@ export const useSRS = () => {
     }
 
     c.reps += 1
+    // 把這次結果推進 recent window
+    const result = correct && firstTry
+    const recent = [...(c.recentResults ?? []), result]
+    c.recentResults = recent.length > RECENT_RESULTS_WINDOW
+      ? recent.slice(-RECENT_RESULTS_WINDOW)
+      : recent
     if (correct && firstTry) {
       c.correctTotal += 1
       d.correct += 1
@@ -597,21 +624,20 @@ export const useSRS = () => {
     return 'ok'
   }
 
-  // 連對到此次數,該卡視為「最近已恢復」,即使終身準確率仍低也不再
-  // 占住 bottom 6 的位置 —— 讓其他真的還沒練到的字進得來。
-  // 答錯後 streak 歸零,如果又開始錯就會再被列為 bottom。
-  const FOCUS_STREAK_GRADUATE = 5
+  // streak 仍當作「快速恢復」的逃生門 —— 不夠最近樣本時 (window < 8) 靠它判斷
+  const FOCUS_STREAK_GRADUATE = 3
 
   // === 重點練習 ===
-  // 取準確率最低的 N 張 + 全部 >=90% 的卡當這場的固定池。
-  // 全部 >=90% 是刻意的:每張高分卡都要持續維持,任何一張掉下來就會跑進下次的 bottom。
+  // 取「最近準確率」最低的 N 張 + 全部 ≥90% 的卡當這場的固定池。
+  // 改用 effectiveAcc (最近 15 次裡的對的比例,不夠就用終身)
+  // 避免歷史包袱重的卡 (如 ヲ) 永遠被當「最差」,實際上已經會了。
   function buildFocusPool(bottomN = 6, topMinReps = 5): string[] {
     const intro = activePool()
       .map((k) => {
         const c = persist.value.cards[k.id]
         if (!c?.introduced) return null
-        const acc = c.reps > 0 ? c.correctTotal / c.reps : 1
-        return { id: k.id, acc, reps: c.reps, streak: c.correctStreak ?? 0 }
+        const eff = effectiveAccuracy(c)
+        return { id: k.id, acc: eff, reps: c.reps, streak: c.correctStreak ?? 0 }
       })
       .filter(
         (x): x is { id: string; acc: number; reps: number; streak: number } => x !== null,
@@ -619,8 +645,10 @@ export const useSRS = () => {
 
     if (intro.length === 0) return []
 
-    // bottom 池只看「最近還在卡關」的卡 —— streak 超過門檻先放生
-    const stillStuck = intro.filter((x) => x.streak < FOCUS_STREAK_GRADUATE)
+    // bottom:最近準確率不夠的卡,連對 3 次以上的先放生
+    const stillStuck = intro.filter(
+      (x) => x.streak < FOCUS_STREAK_GRADUATE && x.acc < 0.9,
+    )
     const sortedByAccAsc = [...stillStuck].sort(
       (a, b) => a.acc - b.acc || b.reps - a.reps,
     )
@@ -726,13 +754,14 @@ export const useSRS = () => {
   }
 
   // === Bottom 6 衝刺 ===
-  // 注意:這裡的 bottom 不套用 streak-graduate 規則 —— 使用者明確要練「最差的 6 張」
+  // 用 effectiveAccuracy (最近 N 次的對的比例) 排序,讓「現在還在卡」的字浮上來,
+  // 不是被歷史包袱定死。streak 不套用 —— 使用者明確要練「最差的 6 張」。
   function startDrillSession(seconds = 600, n = 6): number {
     const intro = activePool()
       .map((k) => {
         const c = persist.value.cards[k.id]
         if (!c?.introduced) return null
-        const acc = c.reps > 0 ? c.correctTotal / c.reps : 1
+        const acc = effectiveAccuracy(c)
         return { id: k.id, acc, reps: c.reps }
       })
       .filter((x): x is { id: string; acc: number; reps: number } => x !== null)
@@ -834,5 +863,6 @@ export const useSRS = () => {
     drillAnswer,
     tickDrill,
     endDrillSession,
+    effectiveAccuracy,
   }
 }

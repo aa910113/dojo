@@ -2,7 +2,7 @@
 import type { KanaEntry } from '~/data/kana'
 import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -573,17 +573,22 @@ interface CardStat {
 
 const cardStatsMap = computed<Map<string, CardStat>>(() => {
   const map = new Map<string, CardStat>()
+  // 使用 effectiveAccuracy (最近 N 次 / 終身) 跟池子建構同步,
+  // 否則格子顏色 (lifetime) 跟重點池選卡 (recent) 會不一致
   const intro = ALL_KANA
     .map((k) => ({ entry: k, state: getCardState(k.id) }))
     .filter((x) => x.state?.introduced)
     .map(({ entry, state }) => ({
       entry,
       state: state!,
-      accuracy: state!.reps > 0 ? state!.correctTotal / state!.reps : 0,
+      accuracy: effectiveAccuracy(state!),
+      streak: state!.correctStreak ?? 0,
     }))
 
+  // 同 buildFocusPool 的 stillStuck 邏輯
   const bottomIds = new Set(
     [...intro]
+      .filter((x) => x.streak < 3 && x.accuracy < 0.9)
       .sort((a, b) => a.accuracy - b.accuracy || b.state.reps - a.state.reps)
       .slice(0, 6)
       .map((x) => x.entry.id),
@@ -595,7 +600,7 @@ const cardStatsMap = computed<Map<string, CardStat>>(() => {
       map.set(k.id, { pool: 'unintroduced', accuracy: 0, reps: 0, lapses: 0, introduced: false })
       continue
     }
-    const accuracy = state.reps > 0 ? state.correctTotal / state.reps : 0
+    const accuracy = effectiveAccuracy(state)
     const inBottom = bottomIds.has(k.id)
     const inTop = !inBottom && accuracy >= 0.9 && state.reps >= 5
     const pool: PoolGroup = inBottom ? 'bottom' : inTop ? 'top' : 'mid'
