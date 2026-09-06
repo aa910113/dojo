@@ -1,4 +1,4 @@
-import { ALL_KANA, type KanaEntry, type KanaScript } from '~/data/kana'
+import { ALL_KANA, STAGES, type KanaEntry, type KanaScript, type Stage } from '~/data/kana'
 
 export interface CardState {
   id: string
@@ -70,6 +70,8 @@ export interface PersistShape {
   cards: Record<string, CardState>
   settings: Settings
   daily: Record<string, DailyStats>
+  // 已通過的關卡數。解鎖數 = min(passed + 1, 總關數)
+  passedStages: number
 }
 
 const DEFAULTS: Settings = {
@@ -145,11 +147,11 @@ function freshCard(id: string): CardState {
 
 function loadPersist(): PersistShape {
   if (typeof window === 'undefined') {
-    return { cards: {}, settings: { ...DEFAULTS }, daily: {} }
+    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { cards: {}, settings: { ...DEFAULTS }, daily: {} }
+    if (!raw) return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
     const parsed = JSON.parse(raw) as Partial<PersistShape>
     const cards = parsed.cards ?? {}
     const now = Date.now()
@@ -158,10 +160,29 @@ function loadPersist(): PersistShape {
       cards,
       settings: { ...DEFAULTS, ...(parsed.settings ?? {}) },
       daily: parsed.daily ?? {},
+      passedStages: normalizePassedStages(parsed.passedStages, cards),
     }
   } catch {
-    return { cards: {}, settings: { ...DEFAULTS }, daily: {} }
+    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
   }
+}
+
+// 舊資料沒有 passedStages → 依「已學過的字落在哪一關」推算,
+// 讓既有使用者不會被鎖回第一關。
+function inferPassedStages(cards: Record<string, CardState>): number {
+  let highest = -1
+  for (const st of STAGES) {
+    if (st.cardIds.some((id) => cards[id]?.introduced)) highest = st.index
+  }
+  // 最高有學過的關算「已解鎖」,所以通過數 = 該關 index
+  return Math.max(0, highest)
+}
+
+function normalizePassedStages(raw: unknown, cards: Record<string, CardState>): number {
+  if (typeof raw === 'number' && isFinite(raw)) {
+    return Math.max(0, Math.min(STAGES.length, Math.floor(raw)))
+  }
+  return inferPassedStages(cards)
 }
 
 function ensureCard(cards: Record<string, CardState>, id: string): CardState {
@@ -240,9 +261,67 @@ export const useSRS = () => {
     save()
   }
 
+  // === 關卡 ===
+  const stageInfo = computed(() => {
+    const total = STAGES.length
+    const passed = Math.max(0, Math.min(total, persist.value.passedStages ?? 0))
+    const unlocked = Math.min(total, passed + 1)
+    const allPassed = passed >= total
+    const current: Stage | null = allPassed ? null : STAGES[unlocked - 1]
+    return { total, passed, unlocked, allPassed, current }
+  })
+
+  const unlockedCardIds = computed(() => {
+    const set = new Set<string>()
+    for (let i = 0; i < stageInfo.value.unlocked; i++) {
+      for (const id of STAGES[i].cardIds) set.add(id)
+    }
+    return set
+  })
+
+  function isUnlocked(id: string): boolean {
+    return unlockedCardIds.value.has(id)
+  }
+
+  // 只有「已解鎖 + 字母設定有勾」的字才進池子
   function activePool(): KanaEntry[] {
     const scripts = new Set(persist.value.settings.scripts)
-    return ALL_KANA.filter((k) => scripts.has(k.script))
+    const unlocked = unlockedCardIds.value
+    return ALL_KANA.filter((k) => scripts.has(k.script) && unlocked.has(k.id))
+  }
+
+  // 最近一次測驗的關卡判定結果,給結果頁顯示
+  const lastStageResult = useState<
+    { passed: boolean; stage: Stage; next: Stage | null; wrongInStage: string[] } | null
+  >('srs-stage-result', () => null)
+
+  // 測驗跑完整輪後呼叫:目前關卡的字全部一次答對 → 解鎖下一關
+  function evaluateStageUnlock(correctIds: string[]): void {
+    const stage = stageInfo.value.current
+    if (!stage) {
+      lastStageResult.value = null
+      return
+    }
+    const correct = new Set(correctIds)
+    const wrongInStage = stage.cardIds.filter((id) => !correct.has(id))
+    const passed = wrongInStage.length === 0
+    const next = passed && stage.index + 1 < STAGES.length ? STAGES[stage.index + 1] : null
+    lastStageResult.value = { passed, stage, next, wrongInStage }
+    if (passed) {
+      persist.value.passedStages = Math.min(STAGES.length, stage.index + 1)
+      save()
+    }
+  }
+
+  // 第一次看著讀法打的字:只標成「已學」,不算對錯
+  function introduceCard(id: string) {
+    const c = ensureCard(persist.value.cards, id)
+    if (c.introduced) return
+    const d = ensureDaily(persist.value.daily, today())
+    c.introduced = true
+    c.dueAt = Date.now()
+    d.newIntroduced += 1
+    save()
   }
 
   function dueNow(): KanaEntry[] {
@@ -575,7 +654,8 @@ export const useSRS = () => {
   }
 
   function resetAll() {
-    persist.value = { cards: {}, settings: { ...DEFAULTS }, daily: {} }
+    persist.value = { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
+    lastStageResult.value = null
     save()
   }
 
@@ -590,6 +670,7 @@ export const useSRS = () => {
       cards,
       settings: { ...DEFAULTS, ...(d.settings ?? {}) },
       daily: (d.daily as Record<string, DailyStats>) ?? {},
+      passedStages: normalizePassedStages(d.passedStages, cards),
     }
     save()
     return true
@@ -643,9 +724,13 @@ export const useSRS = () => {
         (x): x is { id: string; acc: number; reps: number; streak: number } => x !== null,
       )
 
-    if (intro.length === 0) return []
+    // 還沒學過的字(目前關卡的新字)也進池,第一次出現會顯示讀法
+    const fresh = activePool()
+      .filter((k) => !persist.value.cards[k.id]?.introduced)
+      .map((k) => k.id)
+      .slice(0, Math.max(0, persist.value.settings.newPerDay))
 
-    // bottom:最近準確率不夠的卡,連對 3 次以上的先放生
+    if (intro.length === 0 && fresh.length === 0) return []
     const stillStuck = intro.filter(
       (x) => x.streak < FOCUS_STREAK_GRADUATE && x.acc < 0.9,
     )
@@ -658,7 +743,7 @@ export const useSRS = () => {
       .filter((x) => x.acc >= 0.9 && x.reps >= topMinReps && !bottomSet.has(x.id))
       .map((x) => x.id)
 
-    const pool = [...bottom, ...top]
+    const pool = [...fresh, ...bottom, ...top]
     // Fisher-Yates 洗牌,讓出題順序隨機
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
@@ -713,12 +798,12 @@ export const useSRS = () => {
   }
 
   // === 測驗 ===
+  // 測驗範圍 = 所有已解鎖的字(含還沒學過的),這樣才能靠測驗通關
   function startTestSession(): number {
-    const intro = activePool()
-      .filter((k) => persist.value.cards[k.id]?.introduced)
-      .map((k) => k.id)
+    lastStageResult.value = null
+    const ids = activePool().map((k) => k.id)
     // 洗牌出題
-    const queue = [...intro]
+    const queue = [...ids]
     for (let i = queue.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
       ;[queue[i], queue[j]] = [queue[j], queue[i]]
@@ -864,5 +949,10 @@ export const useSRS = () => {
     tickDrill,
     endDrillSession,
     effectiveAccuracy,
+    stageInfo,
+    isUnlocked,
+    lastStageResult,
+    evaluateStageUnlock,
+    introduceCard,
   }
 }

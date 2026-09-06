@@ -22,7 +22,9 @@ function mergePersist(local: PersistShape, remote: Partial<PersistShape>): Persi
   // settings:雲端已有卡片代表是已建立的帳號,以雲端為準;否則用本機
   const remoteEstablished = Object.keys(remote.cards ?? {}).length > 0
   const settings = (remoteEstablished && remote.settings ? remote.settings : local.settings)
-  return { cards, daily, settings }
+  // 關卡進度:兩邊取較高,不因為某一端清空而倒退
+  const passedStages = Math.max(local.passedStages ?? 0, remote.passedStages ?? 0)
+  return { cards, daily, settings, passedStages }
 }
 
 export const useCloudSync = () => {
