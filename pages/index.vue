@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { KanaEntry } from '~/data/kana'
-import { ALL_KANA } from '~/data/kana'
+import { ALL_KANA, STAGES } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
+// 目前這張是「還沒學過的新字」→ 顯示讀法、自動唸,答完只標成已學不記分
+const isNewCard = ref(false)
 const focusProgress = computed(() =>
   focusInitialSize.value > 0
     ? Math.round((focusCorrectCount.value / focusInitialSize.value) * 100)
@@ -25,8 +27,10 @@ function next_focus_card_or_finish() {
   feedback.value = 'idle'
   firstTry.value = true
   wrongCount.value = 0
-  showAnswer.value = false
   locked.value = false
+  isNewCard.value = !getCardState(card.id)?.introduced
+  showAnswer.value = isNewCard.value
+  if (isNewCard.value && settings.value.autoPlaySound) speak(card.char)
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -38,7 +42,7 @@ function startFocus() {
   focusFinished.value = false
   const n = startFocusSession()
   if (n === 0) {
-    alert('還沒有可練習的字 — 請先學一些再來重點練習')
+    alert('目前沒有可練習的字 — 請確認設定裡有勾選目前關卡的字母')
     sessionStarted.value = false
     return
   }
@@ -49,6 +53,7 @@ function finishFocus() {
   endFocusSession()
   focusFinished.value = false
   sessionStarted.value = false
+  isNewCard.value = false
   current.value = null
   input.value = ''
 }
@@ -60,6 +65,8 @@ const testAnswered = computed(() => testCorrectIds.value.length + testWrongIds.v
 function next_test_card_or_finish() {
   const card = pickTestCard()
   if (!card) {
+    // 整輪跑完才判定關卡(中途按「結束」不算)
+    evaluateStageUnlock(testCorrectIds.value)
     testFinished.value = true
     current.value = null
     flushCloud()
@@ -83,7 +90,7 @@ function startTest() {
   testFinished.value = false
   const n = startTestSession()
   if (n === 0) {
-    alert('還沒有可測驗的字 — 請先學一些字')
+    alert('目前沒有可測驗的字 — 請確認設定裡有勾選目前關卡的字母')
     sessionStarted.value = false
     return
   }
@@ -174,7 +181,7 @@ function startDrill() {
   drillFinished.value = false
   const n = startDrillSession(600, 6)
   if (n === 0) {
-    alert('還沒有可衝刺的字 — 請先學一些字')
+    alert('還沒有學過的字可以衝刺 — 先做「重點練習」學目前關卡的字')
     sessionStarted.value = false
     return
   }
@@ -228,6 +235,51 @@ function skipDrillCard() {
 onBeforeUnmount(() => {
   if (drillTimerHandle != null) clearInterval(drillTimerHandle)
 })
+
+// === 手寫描紅 ===
+// 虛線田字格 + 淡色範字,用手指 / 筆描;不辨識、不記分,純練字形
+const traceActive = ref(false)
+const traceIndex = ref(0)
+const traceShowGuide = ref(true)
+const traceBoard = ref<{ clear: () => void; undo: () => void; hasInk: boolean } | null>(null)
+
+// 範圍 = 目前關卡的字;全部通關後用最後一關
+const traceCards = computed<KanaEntry[]>(() => {
+  const stage = stageInfo.value.current ?? STAGES[STAGES.length - 1]
+  return stage.cardIds
+    .map((id) => ALL_KANA.find((k) => k.id === id))
+    .filter((k): k is KanaEntry => !!k)
+})
+const traceCard = computed<KanaEntry | null>(() => traceCards.value[traceIndex.value] ?? null)
+
+function startTrace() {
+  traceIndex.value = 0
+  traceShowGuide.value = true
+  traceActive.value = true
+  sessionStarted.value = true
+  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+}
+
+function finishTrace() {
+  traceActive.value = false
+  sessionStarted.value = false
+}
+
+function traceGo(delta: number) {
+  const n = traceCards.value.length
+  if (n === 0) return
+  traceIndex.value = (traceIndex.value + delta + n) % n
+  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+}
+
+function traceJump(i: number) {
+  traceIndex.value = i
+  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+}
+
+function playTrace() {
+  if (traceCard.value) speak(traceCard.value.char)
+}
 
 const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
 
@@ -399,6 +451,30 @@ function checkAnswer(value: string) {
 
   // === 重點練習模式 ===
   if (focusActive.value && !focusFinished.value) {
+    // 新字:看著讀法打對 → 標成已學(不記分),送回隊尾之後正常練
+    if (isNewCard.value) {
+      if (exact) {
+        feedback.value = 'good'
+        locked.value = true
+        introduceCard(current.value.id)
+        focusAnswer(current.value.id, false)
+        setTimeout(() => next_focus_card_or_finish(), 500)
+      } else {
+        const longestN = Math.max(...accepts.map((a) => a.length))
+        if (!partialMatch || cleaned.length >= longestN) {
+          feedback.value = 'bad'
+          locked.value = true
+          setTimeout(() => {
+            // 打錯就再來一次,不換卡
+            input.value = ''
+            feedback.value = 'idle'
+            locked.value = false
+            nextTick(() => inputEl.value?.focus())
+          }, 500)
+        }
+      }
+      return
+    }
     // 看過答案後輸入 → 不紀錄、不計分,直接送回隊尾
     if (showAnswer.value) {
       feedback.value = exact ? 'good' : 'bad'
@@ -528,6 +604,7 @@ function confirmReset() {
   if (confirm('確定要清除所有學習進度?')) {
     resetAll()
     finishFocus()
+    finishTrace()
   }
 }
 
@@ -562,7 +639,7 @@ function buildGrid(script: 'hiragana' | 'katakana'): GridCell[][] {
 
 const hiraganaGrid = computed(() => buildGrid('hiragana'))
 
-type PoolGroup = 'bottom' | 'top' | 'mid' | 'unintroduced'
+type PoolGroup = 'bottom' | 'top' | 'mid' | 'unintroduced' | 'locked'
 interface CardStat {
   pool: PoolGroup
   accuracy: number
@@ -596,6 +673,10 @@ const cardStatsMap = computed<Map<string, CardStat>>(() => {
 
   for (const k of ALL_KANA) {
     const state = getCardState(k.id)
+    if (!isUnlocked(k.id)) {
+      map.set(k.id, { pool: 'locked', accuracy: 0, reps: 0, lapses: 0, introduced: false })
+      continue
+    }
     if (!state?.introduced) {
       map.set(k.id, { pool: 'unintroduced', accuracy: 0, reps: 0, lapses: 0, introduced: false })
       continue
@@ -763,6 +844,7 @@ const examCountdown = computed(() => {
           <span class="pool-tag pool-mid">中段</span>
           <span class="pool-tag pool-top">≥90%</span>
           <span class="pool-tag pool-unintroduced">未學</span>
+          <span class="pool-tag pool-locked">🔒 未解鎖</span>
         </div>
 
         <div class="kana-grids-stack">
@@ -804,6 +886,7 @@ const examCountdown = computed(() => {
                         <span class="stat-num">{{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
                       </span>
                     </div>
+                    <div v-else-if="cardStatsMap.get(cell.entry.id)?.pool === 'locked'" class="cell-stats cell-stats-unintroduced">🔒</div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
                 </div>
@@ -849,6 +932,7 @@ const examCountdown = computed(() => {
                         <span class="stat-num">{{ cardStatsMap.get(cell.entry.id)!.lapses }}</span>
                       </span>
                     </div>
+                    <div v-else-if="cardStatsMap.get(cell.entry.id)?.pool === 'locked'" class="cell-stats cell-stats-unintroduced">🔒</div>
                     <div v-else class="cell-stats cell-stats-unintroduced">未學</div>
                   </template>
                 </div>
@@ -1036,11 +1120,31 @@ const examCountdown = computed(() => {
 
       <section v-if="!sessionStarted" class="panel hero">
         <h1>今天練 {{ settings.sessionMinutes }} 分鐘</h1>
-        <p class="muted">
-          每天 {{ settings.sessionMinutes }} 分鐘。完全沒背過也沒關係 ——<br />
-          <b>學習模式</b>:新字會顯示讀法 + 自動唸出來,看著打就好。<br />
-          <b>測驗模式</b>:熟了之後不顯示讀法、不先唸,答完才唸 —— 真正記住字形。
-        </p>
+        <div class="stage-box">
+          <template v-if="stageInfo.current">
+            <div class="stage-title">
+              <span class="stage-num">第 {{ stageInfo.unlocked }} / {{ stageInfo.total }} 關</span>
+              <span class="stage-label">
+                {{ stageInfo.current.script === 'hiragana' ? '平假名' : '片假名' }}
+                {{ stageInfo.current.label }}
+              </span>
+            </div>
+            <div class="stage-chars">
+              <span v-for="ch in stageInfo.current.chars" :key="ch" class="stage-char">{{ ch }}</span>
+            </div>
+            <p class="muted stage-note">
+              <b>重點練習</b>:新字第一次出現會顯示讀法 + 自動唸,看著打就好。<br />
+              <b>測驗</b>:這 {{ stageInfo.current.chars.length }} 個字全部一次答對 → 解鎖下一關。<br />
+              <b>手寫描紅</b>:在田字格上描淡字,練字形(不記分)。
+            </p>
+          </template>
+          <template v-else>
+            <div class="stage-title">
+              <span class="stage-num">🎉 全部 {{ stageInfo.total }} 關通過</span>
+            </div>
+            <p class="muted stage-note">五十音全部解鎖,繼續用重點練習與衝刺把弱的字補強。</p>
+          </template>
+        </div>
         <div class="hero-stats">
           <div class="hero-stat">
             <div class="hero-stat-num">{{ stats.learned }}</div>
@@ -1059,6 +1163,50 @@ const examCountdown = computed(() => {
           <button class="primary big" @click="startFocus">重點練習</button>
           <button class="btn-ghost big" @click="startTest">測驗</button>
           <button class="btn-ghost big" @click="startDrill">Bottom 6 衝刺 (10 分鐘)</button>
+          <button class="btn-ghost big" @click="startTrace">✍️ 手寫描紅</button>
+        </div>
+      </section>
+
+      <section v-else-if="traceActive" class="panel session trace-panel">
+        <div class="session-bar">
+          <div class="quiz-title">手寫描紅</div>
+          <div class="session-meta">
+            <span class="muted">{{ traceIndex + 1 }} / {{ traceCards.length }}</span>
+          </div>
+          <button class="btn-ghost" @click="finishTrace">結束</button>
+        </div>
+        <div class="trace-chips">
+          <button
+            v-for="(k, i) in traceCards"
+            :key="k.id"
+            class="trace-chip"
+            :class="{ active: i === traceIndex }"
+            @click="traceJump(i)"
+          >{{ k.char }}</button>
+        </div>
+        <div v-if="traceCard" class="trace-wrap">
+          <div class="trace-head">
+            <span class="script-tag">{{ traceCard.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="trace-romaji">{{ traceCard.romaji }}</span>
+            <button v-if="ttsSupported" class="speak-btn" title="播放讀音" @click="playTrace">🔊</button>
+          </div>
+          <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="traceShowGuide" />
+          <div class="trace-tools">
+            <button
+              class="toggle"
+              :class="{ active: traceShowGuide }"
+              @click="traceShowGuide = !traceShowGuide"
+            >{{ traceShowGuide ? '範字:開' : '範字:關' }}</button>
+            <button class="btn-ghost small" @click="traceBoard?.undo()">上一筆</button>
+            <button class="btn-ghost small" @click="traceBoard?.clear()">清除</button>
+          </div>
+          <div class="trace-nav">
+            <button class="btn-ghost big" @click="traceGo(-1)">← 上一個</button>
+            <button class="primary big" @click="traceGo(1)">下一個 →</button>
+          </div>
+          <p class="muted trace-note">
+            先開著範字描幾次,關掉範字再憑記憶寫一次,對照虛線格的位置檢查字形。
+          </p>
         </div>
       </section>
 
@@ -1173,6 +1321,17 @@ const examCountdown = computed(() => {
 
       <section v-else-if="testFinished" class="panel session test-done-panel">
         <h3>📝 測驗結果</h3>
+        <div v-if="lastStageResult" class="stage-result" :class="lastStageResult.passed ? 'pass' : 'fail'">
+          <template v-if="lastStageResult.passed">
+            🎉 通過「{{ lastStageResult.stage.label }}」!
+            <span v-if="lastStageResult.next">已解鎖下一關:{{ lastStageResult.next.script === 'hiragana' ? '平假名' : '片假名' }} {{ lastStageResult.next.label }}</span>
+            <span v-else>五十音全部通關!</span>
+          </template>
+          <template v-else>
+            「{{ lastStageResult.stage.label }}」還沒通過 —— 錯了
+            {{ lastStageResult.wrongInStage.length }} 個,全部一次答對才解鎖下一關。
+          </template>
+        </div>
         <div class="quiz-summary-row">
           <span class="ok">對 {{ testCorrectIds.length }}</span>
           <span class="ng">錯 {{ testWrongIds.length }}</span>
@@ -1230,7 +1389,8 @@ const examCountdown = computed(() => {
             <span class="script-tag">
               {{ current.script === 'hiragana' ? '平假名' : '片假名' }}
             </span>
-            <span class="learn-tag">重點</span>
+            <span v-if="isNewCard" class="learn-tag">新字</span>
+            <span v-else class="learn-tag">重點</span>
             <span class="focus-progress-dots" :title="`已對 ${focusProgressFor(current.id).done}/${focusProgressFor(current.id).needed} 次`">
               <span
                 v-for="i in focusProgressFor(current.id).needed"
@@ -1239,6 +1399,11 @@ const examCountdown = computed(() => {
                 :class="{ filled: i <= focusProgressFor(current.id).done }"
               >●</span>
             </span>
+          </div>
+          <div v-if="isNewCard" class="learn-hint">
+            <span class="learn-hint-label">讀法</span>
+            <span class="learn-hint-romaji">{{ current.romaji }}</span>
+            <span class="learn-hint-note">新字:照著打一次就記為已學</span>
           </div>
           <input
             ref="inputEl"
@@ -1252,7 +1417,7 @@ const examCountdown = computed(() => {
             placeholder="輸入羅馬字"
             @keydown.enter.prevent="checkAnswer(input)"
           />
-          <div class="hint-row">
+          <div v-if="!isNewCard" class="hint-row">
             <button
               v-if="!showAnswer"
               class="btn-ghost small"
@@ -1916,6 +2081,14 @@ const examCountdown = computed(() => {
   font-size: 10px;
   color: var(--muted);
 }
+.kana-grid-cell.pool-locked {
+  background: transparent;
+  border-style: dotted;
+  opacity: 0.25;
+}
+.kana-grid-cell.pool-locked .cell-stats-unintroduced {
+  font-size: 10px;
+}
 
 .cal-wrap { margin-bottom: 8px; }
 .cal-months {
@@ -2013,6 +2186,114 @@ const examCountdown = computed(() => {
 .pool-tag.pool-top { color: var(--good); border-color: var(--good); }
 .pool-tag.pool-mid { color: var(--muted); }
 .pool-tag.pool-unintroduced { color: var(--muted); opacity: 0.5; }
+.pool-tag.pool-locked { color: var(--muted); opacity: 0.35; }
+
+.stage-box {
+  margin: 12px auto 16px;
+  max-width: 420px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+.stage-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.stage-num {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.stage-label { font-size: 15px; font-weight: 600; }
+.stage-chars {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 10px 0 6px;
+}
+.stage-char {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+}
+.stage-note { font-size: 13px; line-height: 1.6; margin: 6px 0 0; }
+.stage-result {
+  margin: 0 auto 12px;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  border: 1px solid;
+}
+.stage-result.pass {
+  color: var(--good);
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+}
+.trace-chips {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 4px 0 14px;
+}
+.trace-chip {
+  min-width: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+}
+.trace-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(125, 211, 252, 0.12);
+}
+.trace-wrap {
+  max-width: 340px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.trace-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.trace-romaji {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+}
+.trace-tools {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.trace-nav {
+  display: flex;
+  gap: 10px;
+}
+.trace-nav > button { flex: 1; }
+.trace-note { font-size: 12px; line-height: 1.6; text-align: center; margin: 0; }
+.stage-result.fail {
+  color: var(--bad);
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+}
 
 .hero-actions {
   display: flex;
