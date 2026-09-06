@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { KanaEntry } from '~/data/kana'
-import { ALL_KANA } from '~/data/kana'
+import { ALL_KANA, STAGES } from '~/data/kana'
 
 const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
 
@@ -235,6 +235,51 @@ function skipDrillCard() {
 onBeforeUnmount(() => {
   if (drillTimerHandle != null) clearInterval(drillTimerHandle)
 })
+
+// === 手寫描紅 ===
+// 虛線田字格 + 淡色範字,用手指 / 筆描;不辨識、不記分,純練字形
+const traceActive = ref(false)
+const traceIndex = ref(0)
+const traceShowGuide = ref(true)
+const traceBoard = ref<{ clear: () => void; undo: () => void; hasInk: boolean } | null>(null)
+
+// 範圍 = 目前關卡的字;全部通關後用最後一關
+const traceCards = computed<KanaEntry[]>(() => {
+  const stage = stageInfo.value.current ?? STAGES[STAGES.length - 1]
+  return stage.cardIds
+    .map((id) => ALL_KANA.find((k) => k.id === id))
+    .filter((k): k is KanaEntry => !!k)
+})
+const traceCard = computed<KanaEntry | null>(() => traceCards.value[traceIndex.value] ?? null)
+
+function startTrace() {
+  traceIndex.value = 0
+  traceShowGuide.value = true
+  traceActive.value = true
+  sessionStarted.value = true
+  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+}
+
+function finishTrace() {
+  traceActive.value = false
+  sessionStarted.value = false
+}
+
+function traceGo(delta: number) {
+  const n = traceCards.value.length
+  if (n === 0) return
+  traceIndex.value = (traceIndex.value + delta + n) % n
+  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+}
+
+function traceJump(i: number) {
+  traceIndex.value = i
+  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+}
+
+function playTrace() {
+  if (traceCard.value) speak(traceCard.value.char)
+}
 
 const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
 
@@ -559,6 +604,7 @@ function confirmReset() {
   if (confirm('確定要清除所有學習進度?')) {
     resetAll()
     finishFocus()
+    finishTrace()
   }
 }
 
@@ -1088,7 +1134,8 @@ const examCountdown = computed(() => {
             </div>
             <p class="muted stage-note">
               <b>重點練習</b>:新字第一次出現會顯示讀法 + 自動唸,看著打就好。<br />
-              <b>測驗</b>:這 {{ stageInfo.current.chars.length }} 個字全部一次答對 → 解鎖下一關。
+              <b>測驗</b>:這 {{ stageInfo.current.chars.length }} 個字全部一次答對 → 解鎖下一關。<br />
+              <b>手寫描紅</b>:在田字格上描淡字,練字形(不記分)。
             </p>
           </template>
           <template v-else>
@@ -1116,6 +1163,50 @@ const examCountdown = computed(() => {
           <button class="primary big" @click="startFocus">重點練習</button>
           <button class="btn-ghost big" @click="startTest">測驗</button>
           <button class="btn-ghost big" @click="startDrill">Bottom 6 衝刺 (10 分鐘)</button>
+          <button class="btn-ghost big" @click="startTrace">✍️ 手寫描紅</button>
+        </div>
+      </section>
+
+      <section v-else-if="traceActive" class="panel session trace-panel">
+        <div class="session-bar">
+          <div class="quiz-title">手寫描紅</div>
+          <div class="session-meta">
+            <span class="muted">{{ traceIndex + 1 }} / {{ traceCards.length }}</span>
+          </div>
+          <button class="btn-ghost" @click="finishTrace">結束</button>
+        </div>
+        <div class="trace-chips">
+          <button
+            v-for="(k, i) in traceCards"
+            :key="k.id"
+            class="trace-chip"
+            :class="{ active: i === traceIndex }"
+            @click="traceJump(i)"
+          >{{ k.char }}</button>
+        </div>
+        <div v-if="traceCard" class="trace-wrap">
+          <div class="trace-head">
+            <span class="script-tag">{{ traceCard.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="trace-romaji">{{ traceCard.romaji }}</span>
+            <button v-if="ttsSupported" class="speak-btn" title="播放讀音" @click="playTrace">🔊</button>
+          </div>
+          <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="traceShowGuide" />
+          <div class="trace-tools">
+            <button
+              class="toggle"
+              :class="{ active: traceShowGuide }"
+              @click="traceShowGuide = !traceShowGuide"
+            >{{ traceShowGuide ? '範字:開' : '範字:關' }}</button>
+            <button class="btn-ghost small" @click="traceBoard?.undo()">上一筆</button>
+            <button class="btn-ghost small" @click="traceBoard?.clear()">清除</button>
+          </div>
+          <div class="trace-nav">
+            <button class="btn-ghost big" @click="traceGo(-1)">← 上一個</button>
+            <button class="primary big" @click="traceGo(1)">下一個 →</button>
+          </div>
+          <p class="muted trace-note">
+            先開著範字描幾次,關掉範字再憑記憶寫一次,對照虛線格的位置檢查字形。
+          </p>
         </div>
       </section>
 
@@ -2145,6 +2236,59 @@ const examCountdown = computed(() => {
   border-color: rgba(34, 197, 94, 0.4);
   background: rgba(34, 197, 94, 0.08);
 }
+.trace-chips {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 4px 0 14px;
+}
+.trace-chip {
+  min-width: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+}
+.trace-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(125, 211, 252, 0.12);
+}
+.trace-wrap {
+  max-width: 340px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.trace-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.trace-romaji {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+}
+.trace-tools {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.trace-nav {
+  display: flex;
+  gap: 10px;
+}
+.trace-nav > button { flex: 1; }
+.trace-note { font-size: 12px; line-height: 1.6; text-align: center; margin: 0; }
 .stage-result.fail {
   color: var(--bad);
   border-color: rgba(239, 68, 68, 0.4);
