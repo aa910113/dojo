@@ -51,6 +51,15 @@ function startFocus() {
   next_focus_card_or_finish()
 }
 
+function goTestFromFocus() {
+  endFocusSession()
+  focusFinished.value = false
+  isNewCard.value = false
+  current.value = null
+  input.value = ''
+  startTest()
+}
+
 function finishFocus() {
   endFocusSession()
   focusFinished.value = false
@@ -288,6 +297,14 @@ const stageRows = computed<StageRow[]>(() => {
       prevLabel: i > 0 ? STAGES[i - 1].label : '',
     }
   })
+})
+
+// 目前關卡的字全部學過 → 可以去測驗解鎖
+const stageReadyToTest = computed(() => {
+  const cur = stageInfo.value.current
+  if (!cur) return false
+  const row = stageRows.value[cur.index]
+  return !!row && row.introduced >= row.total
 })
 
 const showAllStages = ref(false)
@@ -978,7 +995,7 @@ const examCountdown = computed(() => {
 </script>
 
 <template>
-  <div class="page" :class="{ 'kb-open': kbOpen, 'in-session': sessionStarted }">
+  <div class="page" :class="{ 'kb-open': kbOpen, 'in-session': sessionStarted, 'no-track': !settings.bgm }">
     <div v-if="!sessionStarted" class="ichimatsu-band"></div>
     <header class="topbar">
       <div class="brand">
@@ -1354,7 +1371,8 @@ const examCountdown = computed(() => {
         <button class="start-btn disp" @click="startFocus">開始練習</button>
 
         <div class="mode-grid">
-          <button class="mode-pill mode-normal" @click="startTest">
+          <button class="mode-pill mode-normal" :class="{ ready: stageReadyToTest }" @click="startTest">
+            <span v-if="stageReadyToTest" class="mode-badge disp">解鎖！</span>
             <span class="mode-jp disp">ふつう</span>
             <span class="mode-zh">測驗</span>
           </button>
@@ -1384,6 +1402,7 @@ const examCountdown = computed(() => {
             <div class="stage-body">
               <div class="stage-row-chars disp">{{ row.stage.chars.join('') }}</div>
               <div v-if="row.status === 'passed'" class="stage-row-status">クリア！ 準確率 {{ row.accuracy }}%</div>
+              <div v-else-if="row.status === 'current' && row.introduced >= row.total" class="stage-row-status">已學 {{ row.total }} / {{ row.total }} · 測驗全對即解鎖下一關</div>
               <div v-else-if="row.status === 'current'" class="stage-row-status">挑戰中 · 已學 {{ row.introduced }} / {{ row.total }}</div>
               <div v-else-if="row.stage.index === stageInfo.unlocked" class="stage-row-status">通過 {{ row.prevLabel }} 後解鎖</div>
               <div v-else class="stage-row-status">{{ scriptName(row.stage.script) }}</div>
@@ -1705,10 +1724,16 @@ const examCountdown = computed(() => {
             <span class="done-label">最高コンボ</span>
           </div>
         </div>
-        <p class="muted focus-done-note">
+        <p v-if="stageReadyToTest && stageInfo.current" class="muted focus-done-note">
+          {{ stageInfo.current.label }} 的字都學過了。去「測驗」把這 {{ stageInfo.current.chars.length }} 個字一次全對,就能解鎖下一關。
+        </p>
+        <p v-else class="muted focus-done-note">
           這場練過的字準確率會被推高;下次再開會自動挑當下最弱的 6 張 + 目前關卡的新字。
         </p>
-        <button class="primary big disp" @click="finishFocus">回到首頁</button>
+        <div class="done-actions">
+          <button v-if="stageReadyToTest" class="primary big disp" @click="goTestFromFocus">前往測驗 → 解鎖</button>
+          <button class="btn-ghost big disp" :class="{ primary: !stageReadyToTest }" @click="finishFocus">回到首頁</button>
+        </div>
       </section>
 
     </main>
@@ -1778,6 +1803,10 @@ const examCountdown = computed(() => {
   width: 100vw;
   margin-left: -50vw;
   height: 444px;
+}
+/* 背景音樂關閉時沒有曲名標籤,頭帶跟著縮短 */
+.page.no-track .ichimatsu-band {
+  height: 404px;
   background-color: var(--accent);
   background-image:
     linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%),
@@ -2156,6 +2185,29 @@ const examCountdown = computed(() => {
   background: var(--panel);
 }
 .done-num { font-size: 28px; line-height: 1; }
+.done-actions { display: flex; flex-direction: column; gap: 10px; }
+.done-actions .btn-ghost.big { width: 100%; }
+.mode-pill { position: relative; }
+.mode-pill.ready { animation: ready-bounce 1.6s ease-in-out infinite; }
+.mode-badge {
+  position: absolute;
+  top: -12px;
+  right: -6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--star);
+  border: 2px solid var(--ink);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+@keyframes ready-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mode-pill.ready { animation: none; }
+}
 .done-label { font-size: 11px; color: var(--muted); font-weight: 700; }
 
 .quiz-hint {
