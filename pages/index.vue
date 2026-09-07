@@ -1267,10 +1267,6 @@ const examCountdown = computed(() => {
         <button class="start-btn disp" @click="startFocus">開始練習</button>
 
         <div class="mode-grid">
-          <button class="mode-pill mode-easy" @click="startFocus">
-            <span class="mode-jp disp">かんたん</span>
-            <span class="mode-zh">重點練習</span>
-          </button>
           <button class="mode-pill mode-normal" @click="startTest">
             <span class="mode-jp disp">ふつう</span>
             <span class="mode-zh">測驗</span>
@@ -2560,7 +2556,7 @@ const examCountdown = computed(() => {
 }
 .mode-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .mode-pill {
@@ -2582,7 +2578,6 @@ const examCountdown = computed(() => {
 }
 .mode-jp { font-size: 10px; letter-spacing: 0.08em; }
 .mode-zh { font-size: 12px; font-weight: 700; }
-.mode-easy { background: var(--good); color: var(--panel); }
 .mode-normal { background: var(--accent); }
 .mode-oni { background: var(--bad); color: var(--panel); }
 .stage-list {
