@@ -184,8 +184,8 @@ defineExpose({ clear, undo, hasInk })
   font-family: 'Klee One', 'Hiragino Maru Gothic ProN', 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif;
   font-size: 74px;
   font-weight: 400;
-  fill: var(--text);
-  opacity: 0.16;
+  fill: var(--accent);
+  opacity: 0.2;
 }
 .trace-ink {
   position: absolute;
