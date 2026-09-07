@@ -355,6 +355,7 @@ const syncLabel = computed(() => {
 })
 
 async function onAccountClick() {
+  sfx('ka')
   if (cloudUser.value) {
     if (confirm(`目前登入:${cloudUser.value.email}\n要登出嗎?(本機進度會保留)`)) {
       await cloudSignOut()
@@ -906,7 +907,7 @@ const examCountdown = computed(() => {
         <button
           class="btn-icon"
           :class="{ active: showHistory }"
-          @click="showHistory = !showHistory; if (showHistory) showSettings = false"
+          @click="sfx('ka'); showHistory = !showHistory; if (showHistory) showSettings = false"
           title="紀錄"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10" /><path d="M10 20V4" /><path d="M16 20v-8" /><path d="M22 20H2" /></svg>
@@ -914,7 +915,7 @@ const examCountdown = computed(() => {
         <button
           class="btn-icon"
           :class="{ active: showSettings }"
-          @click="showSettings = !showSettings; if (showSettings) showHistory = false"
+          @click="sfx('ka'); showSettings = !showSettings; if (showSettings) showHistory = false"
           title="設定"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
@@ -1309,11 +1310,11 @@ const examCountdown = computed(() => {
             </div>
             <svg v-else class="stage-lock" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
           </div>
-          <button v-if="hiddenStageCount > 0" class="stage-more" @click="showAllStages = true">
+          <button v-if="hiddenStageCount > 0" class="stage-more" @click="sfx('ka'); showAllStages = true">
             <span>其餘 {{ hiddenStageCount }} 關</span>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
           </button>
-          <button v-else-if="showAllStages" class="stage-more" @click="showAllStages = false">
+          <button v-else-if="showAllStages" class="stage-more" @click="sfx('ka'); showAllStages = false">
             <span>收合</span>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6" /></svg>
           </button>
