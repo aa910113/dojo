@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { KanaEntry } from '~/data/kana'
+import type { KanaEntry, Stage } from '~/data/kana'
 import { ALL_KANA, STAGES } from '~/data/kana'
 
 const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
@@ -235,6 +235,60 @@ function skipDrillCard() {
 onBeforeUnmount(() => {
   if (drillTimerHandle != null) clearInterval(drillTimerHandle)
 })
+
+// === 首頁關卡列表(選曲畫面風) ===
+type StageStatus = 'passed' | 'current' | 'locked'
+interface StageRow {
+  stage: Stage
+  status: StageStatus
+  introduced: number
+  total: number
+  accuracy: number
+  stars: number
+  prevLabel: string
+}
+
+const stageRows = computed<StageRow[]>(() => {
+  const { passed, unlocked, allPassed } = stageInfo.value
+  return STAGES.map((stage, i) => {
+    const status: StageStatus = i < passed ? 'passed' : (!allPassed && i === unlocked - 1) ? 'current' : 'locked'
+    let introduced = 0
+    let accSum = 0
+    for (const id of stage.cardIds) {
+      const c = getCardState(id)
+      if (c?.introduced) {
+        introduced += 1
+        accSum += effectiveAccuracy(c)
+      }
+    }
+    const accuracy = introduced > 0 ? accSum / introduced : 0
+    let stars = 0
+    if (status === 'passed') stars = accuracy >= 0.95 ? 3 : accuracy >= 0.85 ? 2 : 1
+    else if (status === 'current') stars = Math.floor((introduced / stage.cardIds.length) * 3)
+    return {
+      stage,
+      status,
+      introduced,
+      total: stage.cardIds.length,
+      accuracy: Math.round(accuracy * 100),
+      stars,
+      prevLabel: i > 0 ? STAGES[i - 1].label : '',
+    }
+  })
+})
+
+const showAllStages = ref(false)
+// 預設只列到目前關卡 + 後面兩關,其餘摺疊
+const visibleStageRows = computed(() => {
+  if (showAllStages.value) return stageRows.value
+  const cut = Math.min(STAGES.length, stageInfo.value.unlocked + 2)
+  return stageRows.value.slice(0, cut)
+})
+const hiddenStageCount = computed(() => stageRows.value.length - visibleStageRows.value.length)
+
+function scriptName(script: string) {
+  return script === 'hiragana' ? '平假名' : '片假名'
+}
 
 // === 手寫描紅 ===
 // 虛線田字格 + 淡色範字,用手指 / 筆描;不辨識、不記分,純練字形
@@ -788,34 +842,29 @@ const examCountdown = computed(() => {
 
 <template>
   <div class="page">
+    <div v-if="!sessionStarted" class="ichimatsu-band"></div>
     <header class="topbar">
       <div class="brand">
-        <span class="brand-main">五十音 · 打字練習</span>
-        <span class="brand-sub">ゴジュウオン・タイピング</span>
+        <span class="brand-main disp">五十音道場</span>
+        <span class="brand-sub">ゴジュウオン・ドウジョウ</span>
       </div>
       <div class="topbar-stats">
-        <div class="chip">
-          <span class="chip-label">今日</span>
-          <span class="chip-val">{{ todayStudyMin }}m {{ todayStudySec }}s</span>
-        </div>
-        <div class="chip">
-          <span class="chip-label">已學</span>
-          <span class="chip-val">{{ stats.learned }} / {{ stats.total }}</span>
-        </div>
-        <div class="chip">
-          <span class="chip-label">準確率</span>
-          <span class="chip-val">{{ todayAccuracy }}%</span>
-        </div>
         <button
           class="btn-icon"
+          :class="{ active: showHistory }"
           @click="showHistory = !showHistory; if (showHistory) showSettings = false"
           title="紀錄"
-        >📊</button>
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10" /><path d="M10 20V4" /><path d="M16 20v-8" /><path d="M22 20H2" /></svg>
+        </button>
         <button
           class="btn-icon"
+          :class="{ active: showSettings }"
           @click="showSettings = !showSettings; if (showSettings) showHistory = false"
           title="設定"
-        >⚙</button>
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+        </button>
         <button
           class="btn-icon account-btn"
           :class="{ 'signed-in': cloudUser }"
@@ -1121,52 +1170,87 @@ const examCountdown = computed(() => {
         <span class="exam-date">{{ settings.examDate }}</span>
       </section>
 
-      <section v-if="!sessionStarted" class="panel hero">
-        <h1>今天練 {{ settings.sessionMinutes }} 分鐘</h1>
-        <div class="stage-box">
-          <template v-if="stageInfo.current">
-            <div class="stage-title">
-              <span class="stage-num">第 {{ stageInfo.unlocked }} / {{ stageInfo.total }} 關</span>
-              <span class="stage-label">
-                {{ stageInfo.current.script === 'hiragana' ? '平假名' : '片假名' }}
-                {{ stageInfo.current.label }}
-              </span>
+      <section v-if="!sessionStarted" class="hero-taiko">
+        <div class="drum-wrap">
+          <div class="drum">
+            <div class="drum-face">
+              <template v-if="stageInfo.current">
+                <div class="drum-sub">第 {{ stageInfo.unlocked }} 關 · {{ scriptName(stageInfo.current.script) }}</div>
+                <div class="drum-label disp">{{ stageInfo.current.label }}</div>
+                <div class="drum-chars disp">{{ stageInfo.current.chars.join('') }}</div>
+              </template>
+              <template v-else>
+                <div class="drum-sub">{{ stageInfo.total }} / {{ stageInfo.total }} 關</div>
+                <div class="drum-label disp">全通關</div>
+                <div class="drum-chars disp">ぜんクリア</div>
+              </template>
             </div>
-            <div class="stage-chars">
-              <span v-for="ch in stageInfo.current.chars" :key="ch" class="stage-char">{{ ch }}</span>
-            </div>
-            <p class="muted stage-note">
-              <b>重點練習</b>:新字第一次出現會顯示讀法 + 自動唸,看著打就好。<br />
-              <b>測驗</b>:這 {{ stageInfo.current.chars.length }} 個字全部一次答對 → 解鎖下一關。<br />
-              <b>手寫描紅</b>:在田字格上描淡字,練字形(不記分)。
-            </p>
-          </template>
-          <template v-else>
-            <div class="stage-title">
-              <span class="stage-num">🎉 全部 {{ stageInfo.total }} 關通過</span>
-            </div>
-            <p class="muted stage-note">五十音全部解鎖,繼續用重點練習與衝刺把弱的字補強。</p>
-          </template>
-        </div>
-        <div class="hero-stats">
-          <div class="hero-stat">
-            <div class="hero-stat-num">{{ stats.learned }}</div>
-            <div class="hero-stat-label">已掌握</div>
           </div>
-          <div class="hero-stat">
-            <div class="hero-stat-num">{{ stats.introduced - stats.learned }}</div>
-            <div class="hero-stat-label">學習中</div>
-          </div>
-          <div class="hero-stat">
-            <div class="hero-stat-num">{{ stats.remaining }}</div>
-            <div class="hero-stat-label">未學</div>
+          <div class="drum-badges">
+            <div v-if="stageInfo.current" class="badge-pill">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+              <span class="disp">已學 {{ stageRows[stageInfo.unlocked - 1]?.introduced ?? 0 }} / {{ stageInfo.current.chars.length }}</span>
+            </div>
+            <div class="badge-pill badge-pill-alt">
+              <span class="disp">今日 {{ todayStudyMin }}m {{ todayStudySec }}s · {{ todayAccuracy }}%</span>
+            </div>
           </div>
         </div>
-        <div class="hero-actions">
-          <button class="primary big" @click="startFocus">重點練習</button>
-          <button class="btn-ghost big" @click="startTest">測驗</button>
-          <button class="btn-ghost big" @click="startDrill">Bottom 6 衝刺 (10 分鐘)</button>
-          <button class="btn-ghost big" @click="startTrace">✍️ 手寫描紅</button>
+
+        <button class="start-btn disp" @click="startFocus">はじめる</button>
+
+        <div class="mode-grid">
+          <button class="mode-pill mode-easy" @click="startFocus">
+            <span class="mode-jp disp">かんたん</span>
+            <span class="mode-zh">重點練習</span>
+          </button>
+          <button class="mode-pill mode-normal" @click="startTest">
+            <span class="mode-jp disp">ふつう</span>
+            <span class="mode-zh">測驗</span>
+          </button>
+          <button class="mode-pill mode-oni" @click="startDrill">
+            <span class="mode-jp disp">おに</span>
+            <span class="mode-zh">衝刺</span>
+          </button>
+          <button class="mode-pill mode-trace" @click="startTrace">
+            <span class="mode-jp disp">れんしゅう</span>
+            <span class="mode-zh">描紅</span>
+          </button>
+        </div>
+
+        <div class="stage-list">
+          <div class="stage-list-head">
+            <span class="disp stage-list-title">關卡一覽</span>
+            <span class="stage-list-rule"></span>
+            <span class="stage-list-sub">ステージをえらぶ</span>
+          </div>
+          <div
+            v-for="row in visibleStageRows"
+            :key="row.stage.index"
+            class="stage-row"
+            :class="row.status"
+          >
+            <div class="stage-tab disp">{{ row.stage.chars[0] }}</div>
+            <div class="stage-body">
+              <div class="stage-row-chars disp">{{ row.stage.chars.join('') }}</div>
+              <div v-if="row.status === 'passed'" class="stage-row-status">クリア！ 準確率 {{ row.accuracy }}%</div>
+              <div v-else-if="row.status === 'current'" class="stage-row-status">挑戰中 · 已學 {{ row.introduced }} / {{ row.total }}</div>
+              <div v-else-if="row.stage.index === stageInfo.unlocked" class="stage-row-status">通過 {{ row.prevLabel }} 後解鎖</div>
+              <div v-else class="stage-row-status">{{ scriptName(row.stage.script) }}</div>
+            </div>
+            <div v-if="row.status !== 'locked'" class="stage-stars">
+              <svg v-for="i in 3" :key="i" width="18" height="18" viewBox="0 0 24 24" :fill="i <= row.stars ? 'var(--star)' : 'var(--panel)'" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+            </div>
+            <svg v-else class="stage-lock" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </div>
+          <button v-if="hiddenStageCount > 0" class="stage-more" @click="showAllStages = true">
+            <span>其餘 {{ hiddenStageCount }} 關</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          <button v-else-if="showAllStages" class="stage-more" @click="showAllStages = false">
+            <span>收合</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6" /></svg>
+          </button>
         </div>
       </section>
 
@@ -1453,11 +1537,33 @@ const examCountdown = computed(() => {
 
 <style scoped>
 .page {
+  position: relative;
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
   padding: 24px 20px 60px;
 }
+.disp {
+  font-family: var(--font-display);
+  font-weight: 900;
+}
+/* 市松格頭帶:只在首頁出現 */
+.ichimatsu-band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 340px;
+  background-color: var(--accent);
+  background-image:
+    linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%),
+    linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%);
+  background-size: 28px 28px;
+  background-position: 0 0, 14px 14px;
+  border-radius: 0 0 40px 40px;
+  z-index: 0;
+}
+.topbar, main { position: relative; z-index: 1; }
 
 .topbar {
   display: flex;
@@ -1473,51 +1579,43 @@ const examCountdown = computed(() => {
   gap: 2px;
 }
 .brand-main {
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: 0.12em;
+  font-size: 24px;
+  letter-spacing: 0.08em;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 5px var(--panel);
+  text-shadow: 0 3px 0 rgba(var(--ink-rgb), 0.18);
 }
 .brand-sub {
   font-size: 10px;
-  letter-spacing: 0.22em;
-  color: var(--muted);
+  letter-spacing: 0.24em;
+  color: var(--accent-text);
+  font-weight: 700;
 }
 .topbar-stats {
   display: flex;
   gap: 8px;
   align-items: center;
 }
-.chip {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px 10px;
-  display: flex;
-  flex-direction: column;
-  line-height: 1.1;
-}
-.chip-label {
-  font-size: 10px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.chip-val {
-  font-size: 13px;
-  font-weight: 600;
-}
 .btn-icon {
   background: var(--panel);
-  border: 1px solid var(--border);
-  color: var(--text);
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  font-size: 16px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.08s, box-shadow 0.08s;
 }
-.btn-icon:hover {
-  background: var(--panel-2);
+.btn-icon:hover { background: var(--panel-2); }
+.btn-icon:active,
+.btn-icon.active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 var(--ink);
 }
 .account-btn {
   width: auto;
@@ -1586,45 +1684,26 @@ const examCountdown = computed(() => {
   height: 2px;
   background: var(--accent);
 }
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: 26px;
-}
 .muted {
   color: var(--muted);
   font-size: 14px;
   margin: 0 0 20px;
   line-height: 1.6;
 }
-.hero-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin: 20px 0 24px;
-}
-.hero-stat {
-  background: var(--panel-2);
-  border-radius: 12px;
-  padding: 14px;
-  text-align: center;
-}
-.hero-stat-num {
-  font-size: 22px;
-  font-weight: 700;
-}
-.hero-stat-label {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 4px;
-}
 
 .primary {
   background: var(--accent);
   color: var(--on-accent);
-  border: none;
-  border-radius: 10px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  border-radius: 14px;
   padding: 10px 18px;
   font-weight: 700;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.primary:active {
+  transform: translateY(4px);
+  box-shadow: 0 0 0 var(--ink);
 }
 .primary.big {
   width: 100%;
@@ -1636,7 +1715,7 @@ const examCountdown = computed(() => {
   font-size: 13px;
   margin-left: 10px;
 }
-.primary:hover { filter: brightness(1.1); }
+.primary:hover { filter: brightness(1.04); }
 
 .danger {
   background: transparent;
@@ -2219,43 +2298,6 @@ const examCountdown = computed(() => {
 .pool-tag.pool-unintroduced { color: var(--muted); opacity: 0.5; }
 .pool-tag.pool-locked { color: var(--muted); opacity: 0.35; }
 
-.stage-box {
-  margin: 12px auto 16px;
-  max-width: 420px;
-  padding: 14px 18px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel-2);
-}
-.stage-title {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.stage-num {
-  font-size: 12px;
-  color: var(--accent-text);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-}
-.stage-label { font-size: 15px; font-weight: 600; }
-.stage-chars {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin: 10px 0 6px;
-}
-.stage-char {
-  font-family: var(--font-heading);
-  font-size: 32px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--accent-text);
-}
-.stage-chars { gap: 16px; }
-.stage-note { font-size: 13px; line-height: 1.6; margin: 6px 0 0; }
 .stage-result {
   margin: 0 auto 12px;
   max-width: 420px;
@@ -2329,15 +2371,227 @@ const examCountdown = computed(() => {
   background: rgba(var(--bad-rgb), 0.08);
 }
 
-.hero-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
 .btn-ghost.big {
   padding: 14px 28px;
   font-size: 16px;
-  border-radius: 12px;
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 700;
+}
+.btn-ghost.big:active {
+  transform: translateY(4px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+/* ===== 首頁:鼓面 + 難度 + 關卡列表 ===== */
+.hero-taiko {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.drum-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 4px;
+}
+.drum {
+  width: 210px;
+  height: 210px;
+  border-radius: 999px;
+  background: var(--bad);
+  border: 4px solid var(--ink);
+  box-shadow: 0 8px 0 var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.drum-face {
+  width: 164px;
+  height: 164px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 4px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.drum-sub {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+.drum-label {
+  font-size: 58px;
+  line-height: 1.05;
+  color: var(--ink);
+}
+.drum-chars {
+  font-size: 16px;
+  letter-spacing: 0.3em;
+  padding-left: 0.3em;
+  color: var(--bad);
+}
+.drum-badges {
+  display: flex;
+  gap: 8px;
+  margin-top: -18px;
+  position: relative;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--star);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+}
+.badge-pill-alt { background: var(--panel); }
+.start-btn {
+  width: 100%;
+  height: 62px;
+  margin-top: 12px;
+  border-radius: 18px;
+  background: var(--accent-text);
+  color: var(--panel);
+  font-size: 22px;
+  letter-spacing: 0.24em;
+  padding-left: 0.24em;
+  border: 3px solid var(--ink);
+  box-shadow: 0 5px 0 var(--ink);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.start-btn:active {
+  transform: translateY(5px);
+  box-shadow: 0 0 0 var(--ink);
+}
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.mode-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 4px;
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  background: var(--panel);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.mode-pill:active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 var(--ink);
+}
+.mode-jp { font-size: 10px; letter-spacing: 0.08em; }
+.mode-zh { font-size: 12px; font-weight: 700; }
+.mode-easy { background: var(--good); color: var(--panel); }
+.mode-normal { background: var(--accent); }
+.mode-oni { background: var(--bad); color: var(--panel); }
+.stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.stage-list-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.stage-list-title { font-size: 18px; letter-spacing: 0.1em; }
+.stage-list-rule {
+  flex-grow: 1;
+  height: 3px;
+  background: var(--ink);
+  border-radius: 2px;
+}
+.stage-list-sub {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 62px;
+  padding-right: 14px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  overflow: hidden;
+}
+.stage-tab {
+  width: 58px;
+  height: 100%;
+  font-size: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 3px solid var(--ink);
+  flex-shrink: 0;
+}
+.stage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex-grow: 1;
+  min-width: 0;
+}
+.stage-row-chars { font-size: 16px; letter-spacing: 0.2em; }
+.stage-row-status { font-size: 11px; font-weight: 700; }
+.stage-stars { display: flex; gap: 2px; flex-shrink: 0; }
+.stage-row.passed .stage-tab { background: var(--good); color: var(--panel); }
+.stage-row.passed .stage-row-status { color: var(--good); }
+.stage-row.current { background: var(--star-soft); }
+.stage-row.current .stage-tab { background: var(--bad); color: var(--panel); }
+.stage-row.current .stage-row-status { color: var(--bad); }
+.stage-row.locked {
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+  box-shadow: none;
+  color: var(--muted);
+}
+.stage-row.locked .stage-tab {
+  background: var(--border);
+  color: var(--muted);
+  border-right-color: var(--border-strong);
+}
+.stage-row.locked .stage-row-chars,
+.stage-row.locked .stage-row-status { color: var(--muted); font-weight: 500; }
+.stage-lock { flex-shrink: 0; }
+.stage-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 46px;
+  border-radius: 14px;
+  border: 3px dashed var(--border-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
 }
 .focus-progress-bar {
   height: 6px;
@@ -2361,8 +2615,6 @@ const examCountdown = computed(() => {
 @media (max-width: 560px) {
   .kana { font-size: 110px; }
   .topbar-stats { gap: 6px; }
-  .chip { padding: 4px 8px; }
-  .chip-val { font-size: 12px; }
   /* 手機格子太窄 → 改成垂直排:假名上、stats 一樣直排但放在下面 */
   .kana-grid-cell {
     flex-direction: column;

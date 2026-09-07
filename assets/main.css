@@ -15,7 +15,13 @@
   --bad: #d9756a;
   --bad-rgb: 217, 117, 106;
   --border: #e5dfd3;
+  --border-strong: #cfc8b9;
+  --ink: #3a3f47;
   --ink-rgb: 58, 63, 71;
+  --accent-check: #b7dbea;
+  --star: #f2c14e;
+  --star-soft: #fff7e0;
+  --font-display: 'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'Zen Kaku Gothic New', sans-serif;
   --font-heading: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif;
 }
 
