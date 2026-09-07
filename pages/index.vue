@@ -457,7 +457,12 @@ const sessionCorrect = ref(0)
 const sessionWrong = ref(0)
 
 // === 音效 / 背景音樂 ===
-const { sfx, unlock: unlockAudio, startBgm, stopBgm, setSfx, setBgm } = useSound()
+const { sfx, unlock: unlockAudio, startBgm, stopBgm, setSfx, setBgm, nextTrack, trackName, bgmPlaying } = useSound()
+
+function onNextTrack() {
+  sfx('ka')
+  nextTrack()
+}
 
 function toggleSfx() {
   updateSettings({ sfx: !settings.value.sfx })
@@ -1262,6 +1267,11 @@ const examCountdown = computed(() => {
               <span class="disp">今日 {{ todayStudyMin }}m {{ todayStudySec }}s · {{ todayAccuracy }}%</span>
             </div>
           </div>
+          <button v-if="settings.bgm" class="track-chip" :title="bgmPlaying ? '換下一首' : '點一下頁面後開始播放'" @click="onNextTrack">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3v12.3a3.5 3.5 0 1 0 2 3.2V8h6V3H9z" /></svg>
+            <span>{{ bgmPlaying ? trackName : '點一下開始播放' }}</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8z" /><path d="M19 4v16" /></svg>
+          </button>
         </div>
 
         <button class="start-btn disp" @click="startFocus">開始練習</button>
@@ -1618,7 +1628,7 @@ const examCountdown = computed(() => {
   left: 50%;
   width: 100vw;
   margin-left: -50vw;
-  height: 400px;
+  height: 444px;
   background-color: var(--accent);
   background-image:
     linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%),
@@ -2536,6 +2546,21 @@ const examCountdown = computed(() => {
   letter-spacing: 0.1em;
 }
 .badge-pill-alt { background: var(--panel); }
+.track-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(var(--ink-rgb), 0.35);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  position: relative;
+}
 .start-btn {
   width: 100%;
   height: 62px;
