@@ -23,6 +23,8 @@ export interface Settings {
   newPerDay: number
   sessionMinutes: number
   autoPlaySound: boolean
+  sfx: boolean
+  bgm: boolean
   examDate: string
   examLabel: string
 }
@@ -79,6 +81,8 @@ const DEFAULTS: Settings = {
   newPerDay: 6,
   sessionMinutes: 15,
   autoPlaySound: true,
+  sfx: true,
+  bgm: true,
   examDate: '2026-07-05',
   examLabel: 'JLPT N4',
 }

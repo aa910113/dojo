@@ -35,6 +35,7 @@ function next_focus_card_or_finish() {
 }
 
 function startFocus() {
+  sfx('ka')
   sessionStarted.value = true
   sessionCorrect.value = 0
   sessionWrong.value = 0
@@ -67,6 +68,7 @@ function next_test_card_or_finish() {
   if (!card) {
     // 整輪跑完才判定關卡(中途按「結束」不算)
     evaluateStageUnlock(testCorrectIds.value)
+    if (lastStageResult.value?.passed) sfx('clear')
     testFinished.value = true
     current.value = null
     flushCloud()
@@ -83,6 +85,7 @@ function next_test_card_or_finish() {
 }
 
 function startTest() {
+  sfx('ka')
   sessionStarted.value = true
   sessionCorrect.value = 0
   sessionWrong.value = 0
@@ -109,6 +112,7 @@ function skipTestCard() {
   if (!current.value) return
   // 點「我不會」= 直接記錯,送下一張
   feedback.value = 'bad'
+  sfx('fail')
   review(current.value.id, false, false)
   sessionWrong.value += 1
   testAnswer(current.value.id, false)
@@ -174,6 +178,7 @@ function next_drill_card_or_finish() {
 }
 
 function startDrill() {
+  sfx('ka')
   sessionStarted.value = true
   sessionCorrect.value = 0
   sessionWrong.value = 0
@@ -225,6 +230,7 @@ function finishDrill() {
 function skipDrillCard() {
   if (!current.value) return
   feedback.value = 'bad'
+  sfx('fail')
   review(current.value.id, false, false)
   sessionWrong.value += 1
   drillAnswer(current.value.id, false)
@@ -307,6 +313,7 @@ const traceCards = computed<KanaEntry[]>(() => {
 const traceCard = computed<KanaEntry | null>(() => traceCards.value[traceIndex.value] ?? null)
 
 function startTrace() {
+  sfx('ka')
   traceIndex.value = 0
   traceShowGuide.value = true
   traceActive.value = true
@@ -322,6 +329,7 @@ function finishTrace() {
 function traceGo(delta: number) {
   const n = traceCards.value.length
   if (n === 0) return
+  sfx('ka')
   traceIndex.value = (traceIndex.value + delta + n) % n
   if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
 }
@@ -447,6 +455,39 @@ const sessionStarted = ref(false)
 const sessionCorrect = ref(0)
 const sessionWrong = ref(0)
 
+// === 音效 / 背景音樂 ===
+const { sfx, unlock: unlockAudio, startBgm, stopBgm, setSfx, setBgm } = useSound()
+
+function toggleSfx() {
+  updateSettings({ sfx: !settings.value.sfx })
+  if (settings.value.sfx) sfx('ka')
+}
+function toggleBgm() {
+  updateSettings({ bgm: !settings.value.bgm })
+}
+watch(() => settings.value.sfx, (v) => setSfx(v), { immediate: true })
+watch(() => settings.value.bgm, (v) => setBgm(v), { immediate: true })
+
+// 首頁播 BGM,進任何模式就停
+watch(sessionStarted, (started) => {
+  if (started) stopBgm()
+  else startBgm()
+}, { immediate: true })
+
+function onFirstGesture() {
+  unlockAudio()
+  window.removeEventListener('pointerdown', onFirstGesture)
+  window.removeEventListener('keydown', onFirstGesture)
+}
+
+function onVisibility() {
+  if (document.visibilityState === 'hidden') {
+    stopBgm()
+  } else if (!sessionStarted.value) {
+    startBgm()
+  }
+}
+
 function checkAnswer(value: string) {
   if (!current.value || locked.value) return
   const cleaned = value.trim().toLowerCase()
@@ -459,6 +500,7 @@ function checkAnswer(value: string) {
   if (drillActive.value && !drillFinished.value) {
     if (exact) {
       feedback.value = 'good'
+      sfx('don')
       locked.value = true
       review(current.value.id, true, firstTry.value)
       sessionCorrect.value += 1
@@ -470,6 +512,7 @@ function checkAnswer(value: string) {
     const longestD = Math.max(...accepts.map((a) => a.length))
     if (!partialMatch || cleaned.length >= longestD) {
       feedback.value = 'bad'
+      sfx('fail')
       locked.value = true
       review(current.value.id, false, false)
       sessionWrong.value += 1
@@ -483,6 +526,7 @@ function checkAnswer(value: string) {
   if (testActive.value && !testFinished.value) {
     if (exact) {
       feedback.value = 'good'
+      sfx('don')
       locked.value = true
       review(current.value.id, true, firstTry.value)
       sessionCorrect.value += 1
@@ -494,6 +538,7 @@ function checkAnswer(value: string) {
     const longestT = Math.max(...accepts.map((a) => a.length))
     if (!partialMatch || cleaned.length >= longestT) {
       feedback.value = 'bad'
+      sfx('fail')
       locked.value = true
       review(current.value.id, false, false)
       sessionWrong.value += 1
@@ -509,6 +554,7 @@ function checkAnswer(value: string) {
     if (isNewCard.value) {
       if (exact) {
         feedback.value = 'good'
+        sfx('don')
         locked.value = true
         introduceCard(current.value.id)
         focusAnswer(current.value.id, false)
@@ -517,6 +563,7 @@ function checkAnswer(value: string) {
         const longestN = Math.max(...accepts.map((a) => a.length))
         if (!partialMatch || cleaned.length >= longestN) {
           feedback.value = 'bad'
+          sfx('fail')
           locked.value = true
           setTimeout(() => {
             // 打錯就再來一次,不換卡
@@ -539,6 +586,7 @@ function checkAnswer(value: string) {
     }
     if (exact) {
       feedback.value = 'good'
+      sfx('don')
       locked.value = true
       review(current.value.id, true, firstTry.value)
       if (firstTry.value) sessionCorrect.value += 1
@@ -550,6 +598,7 @@ function checkAnswer(value: string) {
     const longestF = Math.max(...accepts.map((a) => a.length))
     if (!partialMatch || cleaned.length >= longestF) {
       feedback.value = 'bad'
+      sfx('fail')
       if (wrongCount.value === 0) {
         firstTry.value = false
         sessionWrong.value += 1
@@ -624,6 +673,9 @@ let speechKeepAlive: number | null = null
 onMounted(() => {
   loadVoice()
   initCloudSync()
+  window.addEventListener('pointerdown', onFirstGesture)
+  window.addEventListener('keydown', onFirstGesture)
+  document.addEventListener('visibilitychange', onVisibility)
   // 請求持久化儲存,降低 iOS/瀏覽器在空間吃緊時清掉 localStorage 的機率
   navigator.storage?.persist?.().catch(() => {})
   if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -640,6 +692,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (speechKeepAlive != null) clearInterval(speechKeepAlive)
+  document.removeEventListener('visibilitychange', onVisibility)
+  stopBgm()
 })
 
 function toggleScript(s: 'hiragana' | 'katakana') {
@@ -1152,6 +1206,18 @@ const examCountdown = computed(() => {
             @click="updateSettings({ autoPlaySound: !settings.autoPlaySound })"
           >
             {{ settings.autoPlaySound ? '開' : '關' }}
+          </button>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">音效</span>
+          <button class="toggle" :class="{ active: settings.sfx }" @click="toggleSfx">
+            {{ settings.sfx ? '開' : '關' }}
+          </button>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">背景音樂(首頁)</span>
+          <button class="toggle" :class="{ active: settings.bgm }" @click="toggleBgm">
+            {{ settings.bgm ? '開' : '關' }}
           </button>
         </div>
         <div class="setting-row">
