@@ -1555,7 +1555,7 @@ const examCountdown = computed(() => {
   left: 50%;
   width: 100vw;
   margin-left: -50vw;
-  height: 340px;
+  height: 400px;
   background-color: var(--accent);
   background-image:
     linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%),
@@ -2453,7 +2453,7 @@ const examCountdown = computed(() => {
 .drum-badges {
   display: flex;
   gap: 8px;
-  margin-top: -18px;
+  margin-top: 22px;
   position: relative;
   flex-wrap: wrap;
   justify-content: center;
@@ -2476,7 +2476,7 @@ const examCountdown = computed(() => {
 .start-btn {
   width: 100%;
   height: 62px;
-  margin-top: 12px;
+  margin-top: 26px;
   border-radius: 18px;
   background: var(--accent-text);
   color: var(--panel);
