@@ -1,19 +1,21 @@
 /* 和風淡色主題:生成り(和紙米白)底 + 墨字 + 藍染強調 + 朱紅只給印章/錯誤 */
 :root {
-  --bg: #f4f0e7;
-  --panel: #fcfaf5;
-  --panel-2: #eee9dd;
-  --text: #23262d;
-  --muted: #6f7683;
-  --accent: #2e5c8a;
-  --accent-rgb: 46, 92, 138;
-  --on-accent: #ffffff;
-  --good: #3b8a5e;
-  --good-rgb: 59, 138, 94;
-  --bad: #be4234;
-  --bad-rgb: 190, 66, 52;
-  --border: #dcd5c6;
-  --ink-rgb: 35, 38, 45;
+  --bg: #f8f6f0;
+  --panel: #fdfcf9;
+  --panel-2: #f1ede4;
+  --text: #3a3f47;
+  --muted: #8a9099;
+  /* 淺蔥色:淡藍當填色;文字用稍深一階的縹色才看得清 */
+  --accent: #9ccbe0;
+  --accent-rgb: 156, 203, 224;
+  --accent-text: #4f8db3;
+  --on-accent: #26313a;
+  --good: #6cb58d;
+  --good-rgb: 108, 181, 141;
+  --bad: #d9756a;
+  --bad-rgb: 217, 117, 106;
+  --border: #e5dfd3;
+  --ink-rgb: 58, 63, 71;
   --font-heading: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif;
 }
 
@@ -44,4 +46,4 @@ input {
   font-family: inherit;
 }
 
-a { color: var(--accent); }
+a { color: var(--accent-text); }
