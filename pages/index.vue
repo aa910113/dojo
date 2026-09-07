@@ -512,6 +512,15 @@ watch(sessionStarted, (started) => {
 }, { immediate: true })
 
 const onDoneScreen = computed(() => focusFinished.value || testFinished.value || drillFinished.value)
+// 彩帶強度:測驗過關最大、零失誤次之、一般完成最小
+const celebrationIntensity = computed(() => {
+  if (testFinished.value && lastStageResult.value?.passed) return 2
+  if (sessionWrong.value === 0) return 1.5
+  return 1
+})
+const fullCombo = computed(() => sessionWrong.value === 0 && sessionCorrect.value > 0)
+let doneKey = 0
+watch(onDoneScreen, (d) => { if (d) doneKey += 1 })
 let resultBgmTimer: number | null = null
 watch(onDoneScreen, (done) => {
   if (resultBgmTimer != null) {
@@ -997,6 +1006,7 @@ const examCountdown = computed(() => {
 <template>
   <div class="page" :class="{ 'kb-open': kbOpen, 'in-session': sessionStarted, 'no-track': !settings.bgm }">
     <div v-if="!sessionStarted" class="ichimatsu-band"></div>
+    <Confetti v-if="onDoneScreen" :key="doneKey" :intensity="celebrationIntensity" />
     <header class="topbar">
       <div class="brand">
         <span class="brand-main disp">五十音道場</span>
@@ -1509,11 +1519,26 @@ const examCountdown = computed(() => {
         </div>
       </section>
 
-      <section v-else-if="drillFinished" class="panel session drill-done-panel">
-        <h3>⏱ 衝刺結束</h3>
-        <div class="quiz-summary-row">
-          <span class="ok">對 {{ sessionCorrect }}</span>
-          <span class="ng">錯 {{ sessionWrong }}</span>
+      <section v-else-if="drillFinished" class="panel session drill-done-panel celebrate">
+        <div class="sunburst"></div>
+        <div class="done-banner">
+          <div class="done-title disp">終了！</div>
+          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
+          <div class="done-sub">Bottom 6 衝刺 · 10 分鐘</div>
+        </div>
+        <div class="done-stats">
+          <div class="done-stat good">
+            <span class="done-num disp">{{ sessionCorrect }}</span>
+            <span class="done-label">答對</span>
+          </div>
+          <div class="done-stat bad">
+            <span class="done-num disp">{{ sessionWrong }}</span>
+            <span class="done-label">答錯</span>
+          </div>
+          <div class="done-stat combo">
+            <span class="done-num disp">{{ comboBest }}</span>
+            <span class="done-label">最高コンボ</span>
+          </div>
         </div>
         <div class="drill-summary-list">
           <div
@@ -1529,7 +1554,7 @@ const examCountdown = computed(() => {
             </span>
           </div>
         </div>
-        <button class="primary big" @click="finishDrill">回到首頁</button>
+        <button class="primary big disp" @click="finishDrill">回到首頁</button>
       </section>
 
       <section v-else-if="testActive && !testFinished" class="panel session test-panel">
@@ -1575,8 +1600,13 @@ const examCountdown = computed(() => {
         </div>
       </section>
 
-      <section v-else-if="testFinished" class="panel session test-done-panel">
-        <h3>📝 測驗結果</h3>
+      <section v-else-if="testFinished" class="panel session test-done-panel celebrate" :class="{ passed: lastStageResult?.passed }">
+        <div v-if="lastStageResult?.passed" class="sunburst"></div>
+        <div class="done-banner">
+          <div class="done-title disp">{{ lastStageResult?.passed ? '合格！' : '終了' }}</div>
+          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
+          <div class="done-sub">測驗 · {{ testTotal }} 張</div>
+        </div>
         <div v-if="lastStageResult" class="stage-result" :class="lastStageResult.passed ? 'pass' : 'fail'">
           <template v-if="lastStageResult.passed">
             🎉 通過「{{ lastStageResult.stage.label }}」!
@@ -1614,7 +1644,7 @@ const examCountdown = computed(() => {
         <p class="muted focus-done-note">
           答錯的字 streak 已歸零,下次重點練習它們會回到 Bottom 6。
         </p>
-        <button class="primary big" @click="finishTest">回到首頁</button>
+        <button class="primary big disp" @click="finishTest">回到首頁</button>
       </section>
 
       <section v-else-if="focusActive && !focusFinished" class="panel session focus-panel">
@@ -1705,21 +1735,26 @@ const examCountdown = computed(() => {
         </div>
       </section>
 
-      <section v-else-if="focusFinished" class="panel session focus-done-panel">
+      <section v-else-if="focusFinished" class="panel session focus-done-panel celebrate">
+        <div class="sunburst"></div>
         <div class="done-banner">
+          <svg class="done-star s1" width="26" height="26" viewBox="0 0 24 24" fill="var(--star)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+          <svg class="done-star s2" width="18" height="18" viewBox="0 0 24 24" fill="var(--bad)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+          <svg class="done-star s3" width="22" height="22" viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
           <div class="done-title disp">完了！</div>
+          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
           <div class="done-sub">重點練習 · {{ focusInitialSize }} 張全部出隊</div>
         </div>
         <div class="done-stats">
-          <div class="done-stat">
-            <span class="done-num disp ok">{{ sessionCorrect }}</span>
+          <div class="done-stat good">
+            <span class="done-num disp">{{ sessionCorrect }}</span>
             <span class="done-label">一次答對</span>
           </div>
-          <div class="done-stat">
-            <span class="done-num disp ng">{{ sessionWrong }}</span>
+          <div class="done-stat bad">
+            <span class="done-num disp">{{ sessionWrong }}</span>
             <span class="done-label">答錯</span>
           </div>
-          <div class="done-stat">
+          <div class="done-stat combo">
             <span class="done-num disp">{{ comboBest }}</span>
             <span class="done-label">最高コンボ</span>
           </div>
@@ -2157,14 +2192,74 @@ const examCountdown = computed(() => {
 .focus-dot.filled { background: var(--star); }
 
 /* 完成畫面 */
-.done-banner { text-align: center; margin: 4px 0 18px; }
+.panel.session.celebrate { position: relative; overflow: hidden; }
+/* 旋轉放射光 */
+.sunburst {
+  position: absolute;
+  inset: -60%;
+  background: repeating-conic-gradient(
+    rgba(242, 193, 78, 0.22) 0deg 9deg,
+    transparent 9deg 18deg
+  );
+  animation: sunburst-spin 28s linear infinite;
+  pointer-events: none;
+  mask-image: radial-gradient(circle at center, #000 0%, rgba(0, 0, 0, 0.55) 35%, transparent 62%);
+  -webkit-mask-image: radial-gradient(circle at center, #000 0%, rgba(0, 0, 0, 0.55) 35%, transparent 62%);
+}
+@keyframes sunburst-spin { to { transform: rotate(360deg); } }
+.done-banner { position: relative; text-align: center; margin: 4px 0 18px; }
 .done-title {
-  font-size: 44px;
+  font-size: 52px;
   line-height: 1.1;
-  color: var(--ink);
+  color: var(--bad);
   paint-order: stroke fill;
-  -webkit-text-stroke: 6px var(--panel);
-  text-shadow: 0 4px 0 rgba(var(--ink-rgb), 0.18);
+  -webkit-text-stroke: 7px var(--panel);
+  text-shadow: 4px 5px 0 var(--ink);
+  animation: title-pop 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+.test-done-panel:not(.passed) .done-title { color: var(--ink); text-shadow: 0 4px 0 rgba(var(--ink-rgb), 0.18); }
+@keyframes title-pop {
+  from { transform: scale(0.3) rotate(-8deg); opacity: 0; }
+  to { transform: scale(1) rotate(0); opacity: 1; }
+}
+.full-combo {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: var(--star);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  transform: rotate(-4deg);
+  animation: badge-pop 0.5s 0.35s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+@keyframes badge-pop {
+  from { transform: rotate(-4deg) scale(0); }
+  to { transform: rotate(-4deg) scale(1); }
+}
+.done-star { position: absolute; animation: twinkle 1.6s ease-in-out infinite; }
+.done-star.s1 { left: 8%; top: -6px; }
+.done-star.s2 { right: 12%; top: 4px; animation-delay: 0.4s; }
+.done-star.s3 { right: 4%; bottom: 8px; animation-delay: 0.9s; }
+@keyframes twinkle {
+  0%, 100% { transform: scale(0.85) rotate(-10deg); opacity: 0.7; }
+  50% { transform: scale(1.15) rotate(10deg); opacity: 1; }
+}
+.done-stat.good { background: rgba(var(--good-rgb), 0.22); }
+.done-stat.bad { background: rgba(var(--bad-rgb), 0.18); }
+.done-stat.combo { background: var(--star-soft); }
+.done-stat { animation: stat-rise 0.45s 0.15s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.done-stat:nth-child(2) { animation-delay: 0.25s; }
+.done-stat:nth-child(3) { animation-delay: 0.35s; }
+@keyframes stat-rise {
+  from { transform: translateY(18px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sunburst, .done-title, .full-combo, .done-star, .done-stat { animation: none; }
 }
 .done-sub { font-size: 13px; color: var(--muted); margin-top: 6px; letter-spacing: 0.08em; }
 .done-stats {
@@ -3077,7 +3172,6 @@ const examCountdown = computed(() => {
   background: var(--accent);
   transition: width 0.3s ease;
 }
-.focus-done-panel h3 { margin: 0 0 16px; }
 .focus-done-note {
   font-size: 13px;
   margin: 16px 0 24px;
