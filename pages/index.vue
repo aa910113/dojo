@@ -1525,8 +1525,8 @@ const examCountdown = computed(() => {
   font-size: 13px;
 }
 .account-btn.signed-in {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
 }
 
 .panel {
@@ -1840,7 +1840,7 @@ const examCountdown = computed(() => {
   letter-spacing: 1px;
 }
 .focus-dot { color: var(--border); transition: color 0.2s; }
-.focus-dot.filled { color: var(--accent); }
+.focus-dot.filled { color: var(--accent-text); }
 .learn-hint {
   background: rgba(var(--accent-rgb), 0.08);
   border: 1px dashed rgba(var(--accent-rgb), 0.4);
@@ -1862,7 +1862,7 @@ const examCountdown = computed(() => {
 .learn-hint-romaji {
   font-size: 28px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: 0.1em;
   font-variant: small-caps;
 }
@@ -1888,7 +1888,7 @@ const examCountdown = computed(() => {
   font-variant: small-caps;
   transition: border-color 0.15s;
 }
-.answer-input:focus { border-color: var(--accent); }
+.answer-input:focus { border-color: var(--accent-text); }
 .answer-input.good { border-color: var(--good); }
 .answer-input.bad { border-color: var(--bad); animation: shake 0.3s; }
 
@@ -1955,7 +1955,7 @@ const examCountdown = computed(() => {
 .toggle.active {
   background: var(--accent);
   color: var(--on-accent);
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -2236,7 +2236,7 @@ const examCountdown = computed(() => {
 }
 .stage-num {
   font-size: 12px;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 700;
   letter-spacing: 0.06em;
 }
@@ -2252,7 +2252,7 @@ const examCountdown = computed(() => {
   font-size: 32px;
   font-weight: 700;
   line-height: 1;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .stage-chars { gap: 16px; }
 .stage-note { font-size: 13px; line-height: 1.6; margin: 6px 0 0; }
@@ -2288,8 +2288,8 @@ const examCountdown = computed(() => {
   cursor: pointer;
 }
 .trace-chip.active {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
   background: rgba(var(--accent-rgb), 0.12);
 }
 .trace-wrap {
@@ -2308,7 +2308,7 @@ const examCountdown = computed(() => {
 .trace-romaji {
   font-size: 26px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: 0.08em;
 }
 .trace-tools {

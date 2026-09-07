@@ -8,7 +8,7 @@ export default defineNuxtConfig({
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { name: 'theme-color', content: '#f4f0e7' },
+        { name: 'theme-color', content: '#f8f6f0' },
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
         { name: 'apple-mobile-web-app-status-bar-style', content: 'default' },
       ],
@@ -38,8 +38,8 @@ export default defineNuxtConfig({
       short_name: '五十音',
       description: '平假名 / 片假名打字練習與間隔複習',
       lang: 'zh-Hant',
-      theme_color: '#f4f0e7',
-      background_color: '#f4f0e7',
+      theme_color: '#f8f6f0',
+      background_color: '#f8f6f0',
       display: 'standalone',
       orientation: 'portrait',
       icons: [
