@@ -1562,6 +1562,16 @@ const examCountdown = computed(() => {
   background-position: 0 0, 14px 14px;
   border-radius: 0 0 40px 40px;
   z-index: 0;
+  /* 市松格斜向捲動:位移一整格 (28px) 後與起點重合,循環無接縫 */
+  animation: ichimatsu-scroll 6s linear infinite;
+  will-change: background-position;
+}
+@keyframes ichimatsu-scroll {
+  from { background-position: 0 0, 14px 14px; }
+  to { background-position: 28px 28px, 42px 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ichimatsu-band { animation: none; }
 }
 .topbar, main { position: relative; z-index: 1; }
 
