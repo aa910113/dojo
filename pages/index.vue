@@ -1549,10 +1549,12 @@ const examCountdown = computed(() => {
 }
 /* 市松格頭帶:只在首頁出現 */
 .ichimatsu-band {
+  /* 滿版出血:不受 .page 的 720px 限制,寬螢幕也貼到視窗兩側 */
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
+  left: 50%;
+  width: 100vw;
+  margin-left: -50vw;
   height: 340px;
   background-color: var(--accent);
   background-image:
@@ -1562,6 +1564,7 @@ const examCountdown = computed(() => {
   background-position: 0 0, 14px 14px;
   border-radius: 0 0 40px 40px;
   z-index: 0;
+  pointer-events: none;
   /* 市松格斜向捲動:位移一整格 (28px) 後與起點重合,循環無接縫 */
   animation: ichimatsu-scroll 6s linear infinite;
   will-change: background-position;
