@@ -1264,7 +1264,7 @@ const examCountdown = computed(() => {
           </div>
         </div>
 
-        <button class="start-btn disp" @click="startFocus">はじめる</button>
+        <button class="start-btn disp" @click="startFocus">開始練習</button>
 
         <div class="mode-grid">
           <button class="mode-pill mode-easy" @click="startFocus">
