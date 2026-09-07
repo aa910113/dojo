@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { KanaEntry } from '~/data/kana'
+import type { KanaEntry, Stage } from '~/data/kana'
 import { ALL_KANA, STAGES } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -30,14 +30,16 @@ function next_focus_card_or_finish() {
   locked.value = false
   isNewCard.value = !getCardState(card.id)?.introduced
   showAnswer.value = isNewCard.value
-  if (isNewCard.value && settings.value.autoPlaySound) speak(card.char)
   nextTick(() => inputEl.value?.focus())
 }
 
 function startFocus() {
+  sfx('ka')
   sessionStarted.value = true
   sessionCorrect.value = 0
   sessionWrong.value = 0
+  combo.value = 0
+  comboBest.value = 0
   resetSessionLapses()
   focusFinished.value = false
   const n = startFocusSession()
@@ -47,6 +49,15 @@ function startFocus() {
     return
   }
   next_focus_card_or_finish()
+}
+
+function goTestFromFocus() {
+  endFocusSession()
+  focusFinished.value = false
+  isNewCard.value = false
+  current.value = null
+  input.value = ''
+  startTest()
 }
 
 function finishFocus() {
@@ -59,6 +70,8 @@ function finishFocus() {
 }
 
 const testFinished = ref(false)
+// 依作答順序記錄對錯,給量表上色
+const testResults = ref<('ok' | 'ng')[]>([])
 const testActive = computed(() => testQueue.value.length > 0 || testFinished.value)
 const testAnswered = computed(() => testCorrectIds.value.length + testWrongIds.value.length)
 
@@ -67,6 +80,7 @@ function next_test_card_or_finish() {
   if (!card) {
     // 整輪跑完才判定關卡(中途按「結束」不算)
     evaluateStageUnlock(testCorrectIds.value)
+    if (lastStageResult.value?.passed) sfx('clear')
     testFinished.value = true
     current.value = null
     flushCloud()
@@ -83,11 +97,15 @@ function next_test_card_or_finish() {
 }
 
 function startTest() {
+  sfx('ka')
   sessionStarted.value = true
   sessionCorrect.value = 0
   sessionWrong.value = 0
+  combo.value = 0
+  comboBest.value = 0
   resetSessionLapses()
   testFinished.value = false
+  testResults.value = []
   const n = startTestSession()
   if (n === 0) {
     alert('目前沒有可測驗的字 — 請確認設定裡有勾選目前關卡的字母')
@@ -109,8 +127,11 @@ function skipTestCard() {
   if (!current.value) return
   // 點「我不會」= 直接記錯,送下一張
   feedback.value = 'bad'
+  sfx('fail')
   review(current.value.id, false, false)
   sessionWrong.value += 1
+  resetCombo()
+  testResults.value.push('ng')
   testAnswer(current.value.id, false)
   locked.value = true
   setTimeout(() => next_test_card_or_finish(), 500)
@@ -128,6 +149,8 @@ const testCorrectCards = computed(() =>
 )
 
 const drillFinished = ref(false)
+const DRILL_SECONDS = 600
+const drillTimePct = computed(() => Math.max(0, Math.min(100, (drillSecondsLeft.value / DRILL_SECONDS) * 100)))
 const drillActive = computed(() => drillPool.value.length > 0 || drillFinished.value)
 let drillTimerHandle: number | null = null
 let drillLastTickAt = 0
@@ -174,9 +197,12 @@ function next_drill_card_or_finish() {
 }
 
 function startDrill() {
+  sfx('ka')
   sessionStarted.value = true
   sessionCorrect.value = 0
   sessionWrong.value = 0
+  combo.value = 0
+  comboBest.value = 0
   resetSessionLapses()
   drillFinished.value = false
   const n = startDrillSession(600, 6)
@@ -225,8 +251,10 @@ function finishDrill() {
 function skipDrillCard() {
   if (!current.value) return
   feedback.value = 'bad'
+  sfx('fail')
   review(current.value.id, false, false)
   sessionWrong.value += 1
+  resetCombo()
   drillAnswer(current.value.id, false)
   locked.value = true
   setTimeout(() => next_drill_card_or_finish(), 500)
@@ -235,6 +263,68 @@ function skipDrillCard() {
 onBeforeUnmount(() => {
   if (drillTimerHandle != null) clearInterval(drillTimerHandle)
 })
+
+// === 首頁關卡列表(選曲畫面風) ===
+type StageStatus = 'passed' | 'current' | 'locked'
+interface StageRow {
+  stage: Stage
+  status: StageStatus
+  introduced: number
+  total: number
+  accuracy: number
+  stars: number
+  prevLabel: string
+}
+
+const stageRows = computed<StageRow[]>(() => {
+  const { passed, unlocked, allPassed } = stageInfo.value
+  return STAGES.map((stage, i) => {
+    const status: StageStatus = i < passed ? 'passed' : (!allPassed && i === unlocked - 1) ? 'current' : 'locked'
+    let introduced = 0
+    let accSum = 0
+    for (const id of stage.cardIds) {
+      const c = getCardState(id)
+      if (c?.introduced) {
+        introduced += 1
+        accSum += effectiveAccuracy(c)
+      }
+    }
+    const accuracy = introduced > 0 ? accSum / introduced : 0
+    let stars = 0
+    if (status === 'passed') stars = accuracy >= 0.95 ? 3 : accuracy >= 0.85 ? 2 : 1
+    else if (status === 'current') stars = Math.floor((introduced / stage.cardIds.length) * 3)
+    return {
+      stage,
+      status,
+      introduced,
+      total: stage.cardIds.length,
+      accuracy: Math.round(accuracy * 100),
+      stars,
+      prevLabel: i > 0 ? STAGES[i - 1].label : '',
+    }
+  })
+})
+
+// 目前關卡的字全部學過 → 可以去測驗解鎖
+const stageReadyToTest = computed(() => {
+  const cur = stageInfo.value.current
+  if (!cur) return false
+  const row = stageRows.value[cur.index]
+  return !!row && row.introduced >= row.total
+})
+
+const showAllStages = ref(false)
+// 預設只列到目前關卡 + 後面兩關,其餘摺疊
+const visibleStageRows = computed(() => {
+  if (showAllStages.value) return stageRows.value
+  const cut = Math.min(STAGES.length, stageInfo.value.unlocked + 2)
+  return stageRows.value.slice(0, cut)
+})
+const hiddenStageCount = computed(() => stageRows.value.length - visibleStageRows.value.length)
+
+function scriptName(script: string) {
+  return script === 'hiragana' ? '平假名' : '片假名'
+}
 
 // === 手寫描紅 ===
 // 虛線田字格 + 淡色範字,用手指 / 筆描;不辨識、不記分,純練字形
@@ -253,11 +343,11 @@ const traceCards = computed<KanaEntry[]>(() => {
 const traceCard = computed<KanaEntry | null>(() => traceCards.value[traceIndex.value] ?? null)
 
 function startTrace() {
+  sfx('ka')
   traceIndex.value = 0
   traceShowGuide.value = true
   traceActive.value = true
   sessionStarted.value = true
-  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
 }
 
 function finishTrace() {
@@ -268,17 +358,16 @@ function finishTrace() {
 function traceGo(delta: number) {
   const n = traceCards.value.length
   if (n === 0) return
+  sfx('ka')
   traceIndex.value = (traceIndex.value + delta + n) % n
-  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
 }
 
 function traceJump(i: number) {
   traceIndex.value = i
-  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
 }
 
 function playTrace() {
-  if (traceCard.value) speak(traceCard.value.char)
+  if (traceCard.value) speakKana(traceCard.value.char)
 }
 
 const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
@@ -293,6 +382,7 @@ const syncLabel = computed(() => {
 })
 
 async function onAccountClick() {
+  sfx('ka')
   if (cloudUser.value) {
     if (confirm(`目前登入:${cloudUser.value.email}\n要登出嗎?(本機進度會保留)`)) {
       await cloudSignOut()
@@ -392,6 +482,143 @@ const showHistory = ref(false)
 const sessionStarted = ref(false)
 const sessionCorrect = ref(0)
 const sessionWrong = ref(0)
+// 連續一次答對的次數(コンボ),答錯歸零
+const combo = ref(0)
+const comboBest = ref(0)
+function bumpCombo() {
+  combo.value += 1
+  if (combo.value > comboBest.value) comboBest.value = combo.value
+}
+function resetCombo() {
+  combo.value = 0
+}
+
+// === 音效 / 背景音樂 ===
+const { sfx, unlock: unlockAudio, startBgm, stopBgm, setSfx, setBgm, nextTrack, trackName, bgmPlaying } = useSound()
+
+function onNextTrack() {
+  sfx('ka')
+  nextTrack()
+}
+
+function toggleSfx() {
+  updateSettings({ sfx: !settings.value.sfx })
+  if (settings.value.sfx) sfx('ka')
+}
+function toggleBgm() {
+  updateSettings({ bgm: !settings.value.bgm })
+}
+watch(() => settings.value.sfx, (v) => setSfx(v), { immediate: true })
+watch(() => settings.value.bgm, (v) => setBgm(v), { immediate: true })
+
+// 首頁播 BGM,進任何模式就停;結果畫面放過關音效 + 專用曲
+watch(sessionStarted, (started) => {
+  if (started) stopBgm()
+  else startBgm('home')
+}, { immediate: true })
+
+const onDoneScreen = computed(() => focusFinished.value || testFinished.value || drillFinished.value)
+
+// === 練習計時 ===
+// 在任何模式裡(重點 / 測驗 / 衝刺 / 描紅)每秒累加,結果畫面與分頁切到背景時暫停;
+// 每 10 秒寫進今日統計一次,結束時把剩餘的補上
+const studying = computed(() => sessionStarted.value && !onDoneScreen.value)
+const sessionSeconds = ref(0)
+let studyTimer: number | null = null
+let pendingStudySeconds = 0
+
+function flushStudySeconds() {
+  if (pendingStudySeconds > 0) {
+    addStudySeconds(pendingStudySeconds)
+    pendingStudySeconds = 0
+  }
+}
+function startStudyTimer() {
+  if (studyTimer != null) return
+  studyTimer = window.setInterval(() => {
+    sessionSeconds.value += 1
+    pendingStudySeconds += 1
+    if (pendingStudySeconds >= 10) flushStudySeconds()
+  }, 1000)
+}
+function stopStudyTimer() {
+  if (studyTimer != null) {
+    clearInterval(studyTimer)
+    studyTimer = null
+  }
+  flushStudySeconds()
+}
+watch(studying, (on) => {
+  if (on) startStudyTimer()
+  else stopStudyTimer()
+})
+watch(sessionStarted, (started) => {
+  if (started) sessionSeconds.value = 0
+})
+function fmtClock(sec: number) {
+  const m = Math.floor(sec / 60)
+  const s2 = sec % 60
+  return `${m}:${String(s2).padStart(2, '0')}`
+}
+// 彩帶強度:測驗過關最大、零失誤次之、一般完成最小
+const celebrationIntensity = computed(() => {
+  if (testFinished.value && lastStageResult.value?.passed) return 2
+  if (sessionWrong.value === 0) return 1.5
+  return 1
+})
+const fullCombo = computed(() => sessionWrong.value === 0 && sessionCorrect.value > 0)
+let doneKey = 0
+watch(onDoneScreen, (d) => { if (d) doneKey += 1 })
+let resultBgmTimer: number | null = null
+watch(onDoneScreen, (done) => {
+  if (resultBgmTimer != null) {
+    clearTimeout(resultBgmTimer)
+    resultBgmTimer = null
+  }
+  if (done) {
+    // 測驗過關已經有更盛大的 clear 音效,其餘結束畫面放 fanfare
+    if (!(testFinished.value && lastStageResult.value?.passed)) sfx('fanfare')
+    // 音效結束後接結果曲
+    resultBgmTimer = window.setTimeout(() => {
+      resultBgmTimer = null
+      if (onDoneScreen.value) startBgm('result')
+    }, 2600)
+  } else if (sessionStarted.value) {
+    stopBgm()
+  }
+})
+
+function onFirstGesture() {
+  unlockAudio()
+  window.removeEventListener('pointerdown', onFirstGesture)
+  window.removeEventListener('keydown', onFirstGesture)
+}
+
+// === 手機軟鍵盤 ===
+// 鍵盤彈出時 visualViewport 變矮;切成緊湊版面塞進可見區,並把頁面釘住不被推上去
+const kbOpen = ref(false)
+function onViewportChange() {
+  const vv = window.visualViewport
+  if (!vv) return
+  document.documentElement.style.setProperty('--vvh', `${Math.round(vv.height)}px`)
+  const open = sessionStarted.value && vv.height < window.innerHeight * 0.82
+  kbOpen.value = open
+  if (open) {
+    // iOS 會把整頁往上捲來露出輸入框;版面已經縮到可見區內,捲回頂端即可
+    window.scrollTo(0, 0)
+  }
+}
+watch(sessionStarted, () => nextTick(onViewportChange))
+
+function onVisibility() {
+  if (document.visibilityState === 'hidden') {
+    stopBgm()
+    stopStudyTimer()
+  } else {
+    if (!sessionStarted.value) startBgm()
+    if (studying.value) startStudyTimer()
+  }
+}
 
 function checkAnswer(value: string) {
   if (!current.value || locked.value) return
@@ -405,9 +632,11 @@ function checkAnswer(value: string) {
   if (drillActive.value && !drillFinished.value) {
     if (exact) {
       feedback.value = 'good'
+      sfx('don')
       locked.value = true
       review(current.value.id, true, firstTry.value)
       sessionCorrect.value += 1
+      bumpCombo()
       drillAnswer(current.value.id, true)
       if (settings.value.autoPlaySound) speak(current.value.char)
       setTimeout(() => next_drill_card_or_finish(), 400)
@@ -416,9 +645,11 @@ function checkAnswer(value: string) {
     const longestD = Math.max(...accepts.map((a) => a.length))
     if (!partialMatch || cleaned.length >= longestD) {
       feedback.value = 'bad'
+      sfx('fail')
       locked.value = true
       review(current.value.id, false, false)
       sessionWrong.value += 1
+      resetCombo()
       drillAnswer(current.value.id, false)
       setTimeout(() => next_drill_card_or_finish(), 600)
     }
@@ -429,9 +660,12 @@ function checkAnswer(value: string) {
   if (testActive.value && !testFinished.value) {
     if (exact) {
       feedback.value = 'good'
+      sfx('don')
       locked.value = true
       review(current.value.id, true, firstTry.value)
       sessionCorrect.value += 1
+      bumpCombo()
+      testResults.value.push('ok')
       testAnswer(current.value.id, true)
       if (settings.value.autoPlaySound) speak(current.value.char)
       setTimeout(() => next_test_card_or_finish(), 500)
@@ -440,9 +674,12 @@ function checkAnswer(value: string) {
     const longestT = Math.max(...accepts.map((a) => a.length))
     if (!partialMatch || cleaned.length >= longestT) {
       feedback.value = 'bad'
+      sfx('fail')
       locked.value = true
       review(current.value.id, false, false)
       sessionWrong.value += 1
+      resetCombo()
+      testResults.value.push('ng')
       testAnswer(current.value.id, false)
       setTimeout(() => next_test_card_or_finish(), 700)
     }
@@ -455,6 +692,7 @@ function checkAnswer(value: string) {
     if (isNewCard.value) {
       if (exact) {
         feedback.value = 'good'
+        sfx('don')
         locked.value = true
         introduceCard(current.value.id)
         focusAnswer(current.value.id, false)
@@ -463,6 +701,7 @@ function checkAnswer(value: string) {
         const longestN = Math.max(...accepts.map((a) => a.length))
         if (!partialMatch || cleaned.length >= longestN) {
           feedback.value = 'bad'
+          sfx('fail')
           locked.value = true
           setTimeout(() => {
             // 打錯就再來一次,不換卡
@@ -485,9 +724,13 @@ function checkAnswer(value: string) {
     }
     if (exact) {
       feedback.value = 'good'
+      sfx('don')
       locked.value = true
       review(current.value.id, true, firstTry.value)
-      if (firstTry.value) sessionCorrect.value += 1
+      if (firstTry.value) {
+        sessionCorrect.value += 1
+        bumpCombo()
+      }
       focusAnswer(current.value.id, true)
       if (settings.value.autoPlaySound) speak(current.value.char)
       setTimeout(() => next_focus_card_or_finish(), 500)
@@ -496,9 +739,11 @@ function checkAnswer(value: string) {
     const longestF = Math.max(...accepts.map((a) => a.length))
     if (!partialMatch || cleaned.length >= longestF) {
       feedback.value = 'bad'
+      sfx('fail')
       if (wrongCount.value === 0) {
         firstTry.value = false
         sessionWrong.value += 1
+        resetCombo()
         review(current.value.id, false, false)
       }
       wrongCount.value += 1
@@ -513,7 +758,7 @@ function checkAnswer(value: string) {
 function revealFocusAnswer() {
   if (!current.value) return
   showAnswer.value = true
-  if (settings.value.autoPlaySound) speak(current.value.char)
+  if (settings.value.autoPlaySound) speakKana(current.value.char)
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -535,11 +780,25 @@ function loadVoice() {
   const voices = window.speechSynthesis.getVoices()
   const ja = voices.filter((v) => v.lang.startsWith('ja'))
   if (ja.length === 0) return
-  // 優先本地語音 (Kyoko)，避免 Chrome 上不穩定的網路語音 (Google 日本語)
-  jaVoice.value = ja.find((v) => v.localService) ?? ja[0]
+  // 語音品質排序:iOS/macOS 的加強版 (Enhanced/Premium/Siri) > 本地 Kyoko/O-ren > 其他本地 > 網路語音
+  const score = (v: SpeechSynthesisVoice) => {
+    const name = v.name.toLowerCase()
+    let sc = 0
+    if (/enhanced|premium|siri|neural/.test(name)) sc += 100
+    if (/kyoko|o-ren|hattori|ichiro|otoya/.test(name)) sc += 40
+    if (v.localService) sc += 20
+    if (/google/.test(name)) sc -= 10
+    return sc
+  }
+  jaVoice.value = [...ja].sort((a, b) => score(b) - score(a))[0]
 }
 
-function speak(text: string) {
+// 喇叭按鈕:只唸該假名本身的短音,不加長音,避免新手把「あー」當成正確讀法
+function speakKana(char: string) {
+  speak(char, 0.8)
+}
+
+function speak(text: string, rate = 0.85) {
   if (typeof window === 'undefined' || !window.speechSynthesis) {
     console.warn('[speak] speechSynthesis 不支援')
     return
@@ -548,7 +807,7 @@ function speak(text: string) {
   if (!jaVoice.value) loadVoice()
   const u = new SpeechSynthesisUtterance(text)
   u.lang = 'ja-JP'
-  u.rate = 0.8
+  u.rate = rate
   u.pitch = 1
   if (jaVoice.value) u.voice = jaVoice.value
   u.onerror = (e) => {
@@ -562,7 +821,7 @@ function speak(text: string) {
 }
 
 function playCurrent() {
-  if (current.value) speak(current.value.char)
+  if (current.value) speakKana(current.value.char)
 }
 
 let speechKeepAlive: number | null = null
@@ -570,6 +829,12 @@ let speechKeepAlive: number | null = null
 onMounted(() => {
   loadVoice()
   initCloudSync()
+  window.addEventListener('pointerdown', onFirstGesture)
+  window.addEventListener('keydown', onFirstGesture)
+  document.addEventListener('visibilitychange', onVisibility)
+  window.visualViewport?.addEventListener('resize', onViewportChange)
+  window.visualViewport?.addEventListener('scroll', onViewportChange)
+  onViewportChange()
   // 請求持久化儲存,降低 iOS/瀏覽器在空間吃緊時清掉 localStorage 的機率
   navigator.storage?.persist?.().catch(() => {})
   if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -586,6 +851,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (speechKeepAlive != null) clearInterval(speechKeepAlive)
+  document.removeEventListener('visibilitychange', onVisibility)
+  window.visualViewport?.removeEventListener('resize', onViewportChange)
+  window.visualViewport?.removeEventListener('scroll', onViewportChange)
+  stopStudyTimer()
+  stopBgm()
 })
 
 function toggleScript(s: 'hiragana' | 'katakana') {
@@ -787,32 +1057,31 @@ const examCountdown = computed(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'kb-open': kbOpen, 'in-session': sessionStarted, 'no-track': !settings.bgm }">
+    <div v-if="!sessionStarted" class="ichimatsu-band"></div>
+    <Confetti v-if="onDoneScreen" :key="doneKey" :intensity="celebrationIntensity" />
     <header class="topbar">
-      <div class="brand">五十音 · 打字練習</div>
+      <div class="brand">
+        <span class="brand-main disp">五十音道場</span>
+        <span class="brand-sub">ゴジュウオン・ドウジョウ</span>
+      </div>
       <div class="topbar-stats">
-        <div class="chip">
-          <span class="chip-label">今日</span>
-          <span class="chip-val">{{ todayStudyMin }}m {{ todayStudySec }}s</span>
-        </div>
-        <div class="chip">
-          <span class="chip-label">已學</span>
-          <span class="chip-val">{{ stats.learned }} / {{ stats.total }}</span>
-        </div>
-        <div class="chip">
-          <span class="chip-label">準確率</span>
-          <span class="chip-val">{{ todayAccuracy }}%</span>
-        </div>
         <button
           class="btn-icon"
-          @click="showHistory = !showHistory; if (showHistory) showSettings = false"
+          :class="{ active: showHistory }"
+          @click="sfx('ka'); showHistory = !showHistory; if (showHistory) showSettings = false"
           title="紀錄"
-        >📊</button>
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10" /><path d="M10 20V4" /><path d="M16 20v-8" /><path d="M22 20H2" /></svg>
+        </button>
         <button
           class="btn-icon"
-          @click="showSettings = !showSettings; if (showSettings) showHistory = false"
+          :class="{ active: showSettings }"
+          @click="sfx('ka'); showSettings = !showSettings; if (showSettings) showHistory = false"
           title="設定"
-        >⚙</button>
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+        </button>
         <button
           class="btn-icon account-btn"
           :class="{ 'signed-in': cloudUser }"
@@ -1103,6 +1372,18 @@ const examCountdown = computed(() => {
           </button>
         </div>
         <div class="setting-row">
+          <span class="setting-label">音效</span>
+          <button class="toggle" :class="{ active: settings.sfx }" @click="toggleSfx">
+            {{ settings.sfx ? '開' : '關' }}
+          </button>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">背景音樂(首頁)</span>
+          <button class="toggle" :class="{ active: settings.bgm }" @click="toggleBgm">
+            {{ settings.bgm ? '開' : '關' }}
+          </button>
+        </div>
+        <div class="setting-row">
           <button class="danger" @click="confirmReset">清除所有進度</button>
         </div>
       </section>
@@ -1118,52 +1399,90 @@ const examCountdown = computed(() => {
         <span class="exam-date">{{ settings.examDate }}</span>
       </section>
 
-      <section v-if="!sessionStarted" class="panel hero">
-        <h1>今天練 {{ settings.sessionMinutes }} 分鐘</h1>
-        <div class="stage-box">
-          <template v-if="stageInfo.current">
-            <div class="stage-title">
-              <span class="stage-num">第 {{ stageInfo.unlocked }} / {{ stageInfo.total }} 關</span>
-              <span class="stage-label">
-                {{ stageInfo.current.script === 'hiragana' ? '平假名' : '片假名' }}
-                {{ stageInfo.current.label }}
-              </span>
+      <section v-if="!sessionStarted" class="hero-taiko">
+        <div class="drum-wrap">
+          <div class="drum">
+            <div class="drum-face">
+              <template v-if="stageInfo.current">
+                <div class="drum-sub">第 {{ stageInfo.unlocked }} 關 · {{ scriptName(stageInfo.current.script) }}</div>
+                <div class="drum-label disp">{{ stageInfo.current.label }}</div>
+                <div class="drum-chars disp">{{ stageInfo.current.chars.join('') }}</div>
+              </template>
+              <template v-else>
+                <div class="drum-sub">{{ stageInfo.total }} / {{ stageInfo.total }} 關</div>
+                <div class="drum-label disp">全通關</div>
+                <div class="drum-chars disp">ぜんクリア</div>
+              </template>
             </div>
-            <div class="stage-chars">
-              <span v-for="ch in stageInfo.current.chars" :key="ch" class="stage-char">{{ ch }}</span>
+          </div>
+          <div class="drum-badges">
+            <div v-if="stageInfo.current" class="badge-pill">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+              <span class="disp">已學 {{ stageRows[stageInfo.unlocked - 1]?.introduced ?? 0 }} / {{ stageInfo.current.chars.length }}</span>
             </div>
-            <p class="muted stage-note">
-              <b>重點練習</b>:新字第一次出現會顯示讀法 + 自動唸,看著打就好。<br />
-              <b>測驗</b>:這 {{ stageInfo.current.chars.length }} 個字全部一次答對 → 解鎖下一關。<br />
-              <b>手寫描紅</b>:在田字格上描淡字,練字形(不記分)。
-            </p>
-          </template>
-          <template v-else>
-            <div class="stage-title">
-              <span class="stage-num">🎉 全部 {{ stageInfo.total }} 關通過</span>
+            <div class="badge-pill badge-pill-alt">
+              <span class="disp">今日 {{ todayStudyMin }}m {{ todayStudySec }}s · {{ todayAccuracy }}%</span>
             </div>
-            <p class="muted stage-note">五十音全部解鎖,繼續用重點練習與衝刺把弱的字補強。</p>
-          </template>
+          </div>
+          <button v-if="settings.bgm" class="track-chip" :title="bgmPlaying ? '換下一首' : '點一下頁面後開始播放'" @click="onNextTrack">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3v12.3a3.5 3.5 0 1 0 2 3.2V8h6V3H9z" /></svg>
+            <span>{{ bgmPlaying ? trackName : '點一下開始播放' }}</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8z" /><path d="M19 4v16" /></svg>
+          </button>
         </div>
-        <div class="hero-stats">
-          <div class="hero-stat">
-            <div class="hero-stat-num">{{ stats.learned }}</div>
-            <div class="hero-stat-label">已掌握</div>
-          </div>
-          <div class="hero-stat">
-            <div class="hero-stat-num">{{ stats.introduced - stats.learned }}</div>
-            <div class="hero-stat-label">學習中</div>
-          </div>
-          <div class="hero-stat">
-            <div class="hero-stat-num">{{ stats.remaining }}</div>
-            <div class="hero-stat-label">未學</div>
-          </div>
+
+        <button class="start-btn disp" @click="startFocus">開始練習</button>
+
+        <div class="mode-grid">
+          <button class="mode-pill mode-normal" :class="{ ready: stageReadyToTest }" @click="startTest">
+            <span v-if="stageReadyToTest" class="mode-badge disp">解鎖！</span>
+            <span class="mode-jp disp">ふつう</span>
+            <span class="mode-zh">隨機測驗</span>
+          </button>
+          <button class="mode-pill mode-oni" @click="startDrill">
+            <span class="mode-jp disp">おに</span>
+            <span class="mode-zh">衝刺</span>
+          </button>
+          <button class="mode-pill mode-trace" @click="startTrace">
+            <span class="mode-jp disp">れんしゅう</span>
+            <span class="mode-zh">描紅</span>
+          </button>
         </div>
-        <div class="hero-actions">
-          <button class="primary big" @click="startFocus">重點練習</button>
-          <button class="btn-ghost big" @click="startTest">測驗</button>
-          <button class="btn-ghost big" @click="startDrill">Bottom 6 衝刺 (10 分鐘)</button>
-          <button class="btn-ghost big" @click="startTrace">✍️ 手寫描紅</button>
+
+        <div class="stage-list">
+          <div class="stage-list-head">
+            <span class="disp stage-list-title">關卡一覽</span>
+            <span class="stage-list-rule"></span>
+            <span class="stage-list-sub">ステージをえらぶ</span>
+          </div>
+          <div
+            v-for="row in visibleStageRows"
+            :key="row.stage.index"
+            class="stage-row"
+            :class="row.status"
+          >
+            <div class="stage-tab disp">{{ row.stage.chars[0] }}</div>
+            <div class="stage-body">
+              <div class="stage-row-chars disp">{{ row.stage.chars.join('') }}</div>
+              <div v-if="row.status === 'passed'" class="stage-row-status">クリア！ 準確率 {{ row.accuracy }}%</div>
+              <div v-else-if="row.status === 'current' && row.introduced >= row.total" class="stage-row-status">已學 {{ row.total }} / {{ row.total }} · 測驗全對即解鎖下一關</div>
+              <div v-else-if="row.status === 'current'" class="stage-row-status">挑戰中 · 已學 {{ row.introduced }} / {{ row.total }}</div>
+              <div v-else-if="row.stage.index === stageInfo.unlocked" class="stage-row-status">通過 {{ row.prevLabel }} 後解鎖</div>
+              <div v-else class="stage-row-status">{{ scriptName(row.stage.script) }}</div>
+            </div>
+            <div v-if="row.status !== 'locked'" class="stage-stars">
+              <svg v-for="i in 3" :key="i" width="18" height="18" viewBox="0 0 24 24" :fill="i <= row.stars ? 'var(--star)' : 'var(--panel)'" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+            </div>
+            <svg v-else class="stage-lock" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          </div>
+          <button v-if="hiddenStageCount > 0" class="stage-more" @click="sfx('ka'); showAllStages = true">
+            <span>其餘 {{ hiddenStageCount }} 關</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          <button v-else-if="showAllStages" class="stage-more" @click="sfx('ka'); showAllStages = false">
+            <span>收合</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6" /></svg>
+          </button>
         </div>
       </section>
 
@@ -1212,28 +1531,37 @@ const examCountdown = computed(() => {
 
       <section v-else-if="drillActive && !drillFinished" class="panel session drill-panel">
         <div class="session-bar">
-          <div class="quiz-title">Bottom 6 衝刺</div>
-          <div class="session-meta">
+          <div class="quiz-title disp">衝刺</div>
+          <div class="session-meta disp">
+            <span class="ok">✓{{ sessionCorrect }}</span>
+            <span class="ng">✗{{ sessionWrong }}</span>
             <span class="timer" :class="{ low: drillSecondsLeft <= 60 }">{{ drillTimeText }}</span>
-            <span class="ok">✓ {{ sessionCorrect }}</span>
-            <span class="ng">✗ {{ sessionWrong }}</span>
           </div>
-          <button class="btn-ghost" @click="finishDrill">結束</button>
+          <button class="btn-ghost arcade" @click="finishDrill">結束</button>
         </div>
-        <div class="quiz-hint muted">只練最低準確率的 6 張,洗牌循環直到時間到</div>
-        <div v-if="current" class="card" :data-state="feedback">
-          <div class="kana-row">
-            <div class="kana">{{ current.char }}</div>
-            <button
-              v-if="ttsSupported"
-              class="speak-btn"
-              title="播放讀音"
-              @click="playCurrent"
-            >🔊</button>
+
+        <!-- 量表 = 剩餘時間 -->
+        <div class="gauge" :class="{ low: drillSecondsLeft <= 60 }">
+          <span class="gauge-bar"><span class="gauge-fill time" :style="{ width: drillTimePct + '%' }"></span></span>
+        </div>
+
+        <div v-if="current" class="card focus-card" :data-state="feedback">
+          <div class="combo-row">
+            <transition name="pop">
+              <span v-if="combo >= 2" :key="combo" class="combo-pill disp">{{ combo }} コンボ</span>
+            </transition>
+          </div>
+          <div class="kana-face-wrap">
+            <div class="kana-face">
+              <div class="kana">{{ current.char }}</div>
+            </div>
+            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playCurrent">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
+            </button>
           </div>
           <div class="tag-row">
-            <span class="script-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="learn-tag">衝刺</span>
+            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="chip-tag chip-oni disp">おに</span>
           </div>
           <input
             ref="inputEl"
@@ -1248,16 +1576,32 @@ const examCountdown = computed(() => {
             @keydown.enter.prevent="checkAnswer(input)"
           />
           <div class="hint-row">
-            <button class="btn-ghost small" @click="skipDrillCard">我不會</button>
+            <button class="btn-ghost arcade small" @click="skipDrillCard">我不會</button>
+            <span class="quiz-hint muted">最弱 6 張洗牌循環到時間到</span>
           </div>
         </div>
       </section>
 
-      <section v-else-if="drillFinished" class="panel session drill-done-panel">
-        <h3>⏱ 衝刺結束</h3>
-        <div class="quiz-summary-row">
-          <span class="ok">對 {{ sessionCorrect }}</span>
-          <span class="ng">錯 {{ sessionWrong }}</span>
+      <section v-else-if="drillFinished" class="panel session drill-done-panel celebrate">
+        <div class="sunburst"></div>
+        <div class="done-banner">
+          <div class="done-title disp">終了！</div>
+          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
+          <div class="done-sub">Bottom 6 衝刺 · 10 分鐘</div>
+        </div>
+        <div class="done-stats">
+          <div class="done-stat good">
+            <span class="done-num disp">{{ sessionCorrect }}</span>
+            <span class="done-label">答對</span>
+          </div>
+          <div class="done-stat bad">
+            <span class="done-num disp">{{ sessionWrong }}</span>
+            <span class="done-label">答錯</span>
+          </div>
+          <div class="done-stat combo">
+            <span class="done-num disp">{{ comboBest }}</span>
+            <span class="done-label">最高コンボ</span>
+          </div>
         </div>
         <div class="drill-summary-list">
           <div
@@ -1273,33 +1617,51 @@ const examCountdown = computed(() => {
             </span>
           </div>
         </div>
-        <button class="primary big" @click="finishDrill">回到首頁</button>
+        <button class="primary big disp" @click="finishDrill">回到首頁</button>
       </section>
 
       <section v-else-if="testActive && !testFinished" class="panel session test-panel">
         <div class="session-bar">
-          <div class="quiz-title">測驗</div>
-          <div class="session-meta">
-            <span class="ok">✓ {{ testCorrectIds.length }}</span>
-            <span class="ng">✗ {{ testWrongIds.length }}</span>
-            <span class="muted">{{ testAnswered }} / {{ testTotal }}</span>
+          <div class="quiz-title disp">隨機測驗</div>
+          <div class="session-meta disp">
+            <span class="ok">✓{{ testCorrectIds.length }}</span>
+            <span class="ng">✗{{ testWrongIds.length }}</span>
+            <span>{{ testAnswered }} / {{ testTotal }}</span>
+            <span class="session-clock">{{ fmtClock(sessionSeconds) }}</span>
           </div>
-          <button class="btn-ghost" @click="finishTest">結束</button>
+          <button class="btn-ghost arcade" @click="finishTest">結束</button>
         </div>
-        <div class="quiz-hint muted">每張只問一次,答對 streak +1,答錯歸零</div>
-        <div v-if="current" class="card" :data-state="feedback">
-          <div class="kana-row">
-            <div class="kana">{{ current.char }}</div>
-            <button
-              v-if="ttsSupported"
-              class="speak-btn"
-              :title="'播放讀音'"
-              @click="playCurrent"
-            >🔊</button>
+
+        <!-- 量表:每題一格,依對錯上色 -->
+        <div class="gauge">
+          <template v-if="testTotal <= 24">
+            <span
+              v-for="i in testTotal"
+              :key="i"
+              class="gauge-cell"
+              :class="testResults[i - 1] === 'ok' ? 'on good' : testResults[i - 1] === 'ng' ? 'on bad' : ''"
+            ></span>
+          </template>
+          <span v-else class="gauge-bar"><span class="gauge-fill" :style="{ width: (testAnswered / testTotal) * 100 + '%' }"></span></span>
+        </div>
+
+        <div v-if="current" class="card focus-card" :data-state="feedback">
+          <div class="combo-row">
+            <transition name="pop">
+              <span v-if="combo >= 2" :key="combo" class="combo-pill disp">{{ combo }} コンボ</span>
+            </transition>
+          </div>
+          <div class="kana-face-wrap">
+            <div class="kana-face">
+              <div class="kana">{{ current.char }}</div>
+            </div>
+            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playCurrent">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
+            </button>
           </div>
           <div class="tag-row">
-            <span class="script-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="learn-tag">測驗</span>
+            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="chip-tag chip-test disp">測驗</span>
           </div>
           <input
             ref="inputEl"
@@ -1314,13 +1676,19 @@ const examCountdown = computed(() => {
             @keydown.enter.prevent="checkAnswer(input)"
           />
           <div class="hint-row">
-            <button class="btn-ghost small" @click="skipTestCard">我不會</button>
+            <button class="btn-ghost arcade small" @click="skipTestCard">我不會</button>
+            <span class="quiz-hint muted">每張只問一次,不提示</span>
           </div>
         </div>
       </section>
 
-      <section v-else-if="testFinished" class="panel session test-done-panel">
-        <h3>📝 測驗結果</h3>
+      <section v-else-if="testFinished" class="panel session test-done-panel celebrate" :class="{ passed: lastStageResult?.passed }">
+        <div v-if="lastStageResult?.passed" class="sunburst"></div>
+        <div class="done-banner">
+          <div class="done-title disp">{{ lastStageResult?.passed ? '合格！' : '終了' }}</div>
+          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
+          <div class="done-sub">隨機測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
+        </div>
         <div v-if="lastStageResult" class="stage-result" :class="lastStageResult.passed ? 'pass' : 'fail'">
           <template v-if="lastStageResult.passed">
             🎉 通過「{{ lastStageResult.stage.label }}」!
@@ -1358,53 +1726,68 @@ const examCountdown = computed(() => {
         <p class="muted focus-done-note">
           答錯的字 streak 已歸零,下次重點練習它們會回到 Bottom 6。
         </p>
-        <button class="primary big" @click="finishTest">回到首頁</button>
+        <button class="primary big disp" @click="finishTest">回到首頁</button>
       </section>
 
       <section v-else-if="focusActive && !focusFinished" class="panel session focus-panel">
         <div class="session-bar">
-          <div class="quiz-title">重點練習</div>
-          <div class="session-meta">
-            <span class="ok">✓ {{ focusCorrectCount }}</span>
-            <span class="muted">{{ focusCorrectCount }} / {{ focusInitialSize }}</span>
+          <div class="quiz-title disp">重點練習</div>
+          <div class="session-meta disp">
+            <span>{{ focusCorrectCount }} / {{ focusInitialSize }}</span>
+            <span class="session-clock">{{ fmtClock(sessionSeconds) }}</span>
           </div>
-          <button class="btn-ghost" @click="finishFocus">結束</button>
+          <button class="btn-ghost arcade" @click="finishFocus">結束</button>
         </div>
-        <div class="focus-progress-bar">
-          <div class="focus-progress-fill" :style="{ width: focusProgress + '%' }"></div>
+
+        <!-- 魂ゲージ:每張出隊亮一格 -->
+        <div class="gauge" :class="{ full: focusCorrectCount >= focusInitialSize }">
+          <template v-if="focusInitialSize <= 14">
+            <span
+              v-for="i in focusInitialSize"
+              :key="i"
+              class="gauge-cell"
+              :class="{ on: i <= focusCorrectCount }"
+            ></span>
+          </template>
+          <span v-else class="gauge-bar"><span class="gauge-fill" :style="{ width: focusProgress + '%' }"></span></span>
         </div>
-        <div v-if="current" class="card" :data-state="feedback">
-          <div class="kana-row">
-            <div class="kana">{{ current.char }}</div>
+
+        <div v-if="current" class="card focus-card" :data-state="feedback">
+          <div class="combo-row">
+            <transition name="pop">
+              <span v-if="combo >= 2" :key="combo" class="combo-pill disp">{{ combo }} コンボ</span>
+            </transition>
+          </div>
+
+          <div class="kana-face-wrap">
+            <div class="kana-face" :class="{ 'with-reading': isNewCard }">
+              <div class="kana">{{ current.char }}</div>
+              <div v-if="isNewCard" class="kana-reading disp">{{ current.romaji }}</div>
+            </div>
             <button
               v-if="ttsSupported"
-              class="speak-btn"
+              class="speak-btn arcade"
               :title="settings.autoPlaySound ? '播放讀音' : '播放讀音 (自動播放已關)'"
               @click="playCurrent"
             >
-              🔊
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
             </button>
           </div>
+
           <div class="tag-row">
-            <span class="script-tag">
-              {{ current.script === 'hiragana' ? '平假名' : '片假名' }}
-            </span>
-            <span v-if="isNewCard" class="learn-tag">新字</span>
-            <span v-else class="learn-tag">重點</span>
+            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span v-if="isNewCard" class="chip-tag chip-new disp">新字</span>
+            <span v-else class="chip-tag chip-focus disp">重點</span>
             <span class="focus-progress-dots" :title="`已對 ${focusProgressFor(current.id).done}/${focusProgressFor(current.id).needed} 次`">
               <span
                 v-for="i in focusProgressFor(current.id).needed"
                 :key="i"
                 class="focus-dot"
                 :class="{ filled: i <= focusProgressFor(current.id).done }"
-              >●</span>
+              ></span>
             </span>
           </div>
-          <div v-if="isNewCard" class="learn-hint">
-            <span class="learn-hint-label">讀法</span>
-            <span class="learn-hint-romaji">{{ current.romaji }}</span>
-            <span class="learn-hint-note">新字:照著打一次就記為已學</span>
-          </div>
+
           <input
             ref="inputEl"
             v-model="input"
@@ -1414,34 +1797,61 @@ const examCountdown = computed(() => {
             autocapitalize="off"
             autocorrect="off"
             spellcheck="false"
-            placeholder="輸入羅馬字"
+            :placeholder="isNewCard ? `照著打 ${current.romaji}` : '輸入羅馬字'"
             @keydown.enter.prevent="checkAnswer(input)"
           />
-          <div v-if="!isNewCard" class="hint-row">
+
+          <div v-if="isNewCard" class="hint-row">
+            <span class="new-card-note muted">新字:照著讀法打一次就記為已學,之後不再提示</span>
+          </div>
+          <div v-else class="hint-row">
             <button
               v-if="!showAnswer"
-              class="btn-ghost small"
+              class="btn-ghost arcade small"
               @click="revealFocusAnswer"
-            >不會 (看答案)</button>
+            >不會(看答案)</button>
             <span v-else class="answer-shown">
-              答案: <strong>{{ current.romaji }}</strong>
+              答案 <strong class="disp">{{ current.romaji }}</strong>
               <span class="answer-note muted">看了不記分,需再答對一次才出隊</span>
             </span>
           </div>
         </div>
       </section>
 
-      <section v-else-if="focusFinished" class="panel session focus-done-panel">
-        <h3>🎉 重點練習完成</h3>
-        <div class="quiz-summary-row">
-          <span class="ok">完成 {{ focusInitialSize }} 張</span>
-          <span class="muted">對 {{ sessionCorrect }} · 錯 {{ sessionWrong }}</span>
+      <section v-else-if="focusFinished" class="panel session focus-done-panel celebrate">
+        <div class="sunburst"></div>
+        <div class="done-banner">
+          <svg class="done-star s1" width="26" height="26" viewBox="0 0 24 24" fill="var(--star)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+          <svg class="done-star s2" width="18" height="18" viewBox="0 0 24 24" fill="var(--bad)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+          <svg class="done-star s3" width="22" height="22" viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
+          <div class="done-title disp">完了！</div>
+          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
+          <div class="done-sub">重點練習 · {{ focusInitialSize }} 張全部出隊 · {{ fmtClock(sessionSeconds) }}</div>
         </div>
-        <p class="muted focus-done-note">
-          這場練的這 {{ focusInitialSize }} 張的最低準確率組會被推高;
-          下次再開時系統會自動挑當下最弱的 6 張 + 全部 ≥90% 的字。
+        <div class="done-stats">
+          <div class="done-stat good">
+            <span class="done-num disp">{{ sessionCorrect }}</span>
+            <span class="done-label">一次答對</span>
+          </div>
+          <div class="done-stat bad">
+            <span class="done-num disp">{{ sessionWrong }}</span>
+            <span class="done-label">答錯</span>
+          </div>
+          <div class="done-stat combo">
+            <span class="done-num disp">{{ comboBest }}</span>
+            <span class="done-label">最高コンボ</span>
+          </div>
+        </div>
+        <p v-if="stageReadyToTest && stageInfo.current" class="muted focus-done-note">
+          {{ stageInfo.current.label }} 的字都學過了。去「測驗」把這 {{ stageInfo.current.chars.length }} 個字一次全對,就能解鎖下一關。
         </p>
-        <button class="primary big" @click="finishFocus">回到首頁</button>
+        <p v-else class="muted focus-done-note">
+          這場練過的字準確率會被推高;下次再開會自動挑當下最弱的 6 張 + 目前關卡的新字。
+        </p>
+        <div class="done-actions">
+          <button v-if="stageReadyToTest" class="primary big disp" @click="goTestFromFocus">前往測驗 → 解鎖</button>
+          <button class="btn-ghost big disp" :class="{ primary: !stageReadyToTest }" @click="finishFocus">回到首頁</button>
+        </div>
       </section>
 
     </main>
@@ -1450,11 +1860,94 @@ const examCountdown = computed(() => {
 
 <style scoped>
 .page {
+  position: relative;
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
   padding: 24px 20px 60px;
 }
+.disp {
+  font-family: var(--font-display);
+  font-weight: 900;
+}
+
+/* ===== 軟鍵盤開啟時的緊湊版面 ===== */
+.page.in-session.kb-open {
+  position: fixed;
+  inset: 0;
+  height: var(--vvh, 100%);
+  overflow-y: auto;
+  padding: 8px 14px 12px;
+}
+.page.in-session.kb-open .topbar { display: none; }
+.page.in-session.kb-open .panel.session {
+  padding: 12px 14px;
+  margin-bottom: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+.page.in-session.kb-open .session-bar { margin-bottom: 10px; }
+.page.in-session.kb-open .gauge { margin: 0 0 4px; padding: 3px; }
+.page.in-session.kb-open .gauge-cell,
+.page.in-session.kb-open .gauge-bar { height: 8px; }
+.page.in-session.kb-open .combo-row { height: 24px; }
+.page.in-session.kb-open .card { padding: 4px 0; }
+.page.in-session.kb-open .panel.session::before { display: none; }
+.page.in-session.kb-open .kana-face-wrap { width: 150px; height: 150px; margin: 0 auto 8px; }
+.page.in-session.kb-open .kana-face-wrap::before { box-shadow: 0 4px 0 var(--ink); }
+.page.in-session.kb-open .kana-face { inset: 12px; }
+.page.in-session.kb-open .drill-panel .quiz-title,
+.page.in-session.kb-open .drill-panel .session-meta.disp,
+.page.in-session.kb-open .drill-panel .session-meta.disp .timer { color: var(--ink); }
+.page.in-session.kb-open .kana-face .kana { font-size: 84px; }
+.page.in-session.kb-open .kana-face.with-reading .kana { font-size: 70px; }
+.page.in-session.kb-open .kana-reading { font-size: 18px; }
+.page.in-session.kb-open .new-card-note { display: none; }
+.page.in-session.kb-open .kana-face-wrap .speak-btn { width: 40px; height: 40px; right: -6px; bottom: -2px; }
+.page.in-session.kb-open .kana { font-size: 96px; margin: 0; }
+.page.in-session.kb-open .tag-row { margin-bottom: 8px; }
+.page.in-session.kb-open .learn-hint { padding: 6px 12px; margin: 0 auto 8px; gap: 0; box-shadow: none; }
+.page.in-session.kb-open .learn-hint-romaji { font-size: 20px; }
+.page.in-session.kb-open .learn-hint-note { display: none; }
+.page.in-session.kb-open .answer-input { font-size: 22px; padding: 8px 12px; }
+.page.in-session.kb-open .hint-row { margin-top: 8px; }
+.page.in-session.kb-open .answer-note { display: none; }
+.page.in-session.kb-open .quiz-hint,
+.page.in-session.kb-open .trace-note { display: none; }
+.page.in-session.kb-open .focus-progress-bar { margin: -6px 0 8px; }
+/* 市松格頭帶:只在首頁出現 */
+.ichimatsu-band {
+  /* 滿版出血:不受 .page 的 720px 限制,寬螢幕也貼到視窗兩側 */
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 100vw;
+  margin-left: -50vw;
+  height: 444px;
+  background-color: var(--accent);
+  background-image:
+    linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%),
+    linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%);
+  background-size: 28px 28px;
+  background-position: 0 0, 14px 14px;
+  border-radius: 0 0 40px 40px;
+  z-index: 0;
+  pointer-events: none;
+  /* 市松格斜向捲動:位移一整格 (28px) 後與起點重合,循環無接縫 */
+  animation: ichimatsu-scroll 6s linear infinite;
+  will-change: background-position;
+}
+/* 背景音樂關閉時沒有曲名標籤,頭帶跟著縮短 */
+.page.no-track .ichimatsu-band { height: 404px; }
+@keyframes ichimatsu-scroll {
+  from { background-position: 0 0, 14px 14px; }
+  to { background-position: 28px 28px, 42px 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ichimatsu-band { animation: none; }
+}
+.topbar, main { position: relative; z-index: 1; }
 
 .topbar {
   display: flex;
@@ -1465,45 +1958,48 @@ const examCountdown = computed(() => {
   gap: 12px;
 }
 .brand {
-  font-weight: 600;
-  font-size: 16px;
-  letter-spacing: 0.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-main {
+  font-size: 24px;
+  letter-spacing: 0.08em;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 5px var(--panel);
+  text-shadow: 0 3px 0 rgba(var(--ink-rgb), 0.18);
+}
+.brand-sub {
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  color: var(--accent-text);
+  font-weight: 700;
 }
 .topbar-stats {
   display: flex;
   gap: 8px;
   align-items: center;
 }
-.chip {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px 10px;
-  display: flex;
-  flex-direction: column;
-  line-height: 1.1;
-}
-.chip-label {
-  font-size: 10px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.chip-val {
-  font-size: 13px;
-  font-weight: 600;
-}
 .btn-icon {
   background: var(--panel);
-  border: 1px solid var(--border);
-  color: var(--text);
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  font-size: 16px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.08s, box-shadow 0.08s;
 }
-.btn-icon:hover {
-  background: var(--panel-2);
+.btn-icon:hover { background: var(--panel-2); }
+.btn-icon:active,
+.btn-icon.active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 var(--ink);
 }
 .account-btn {
   width: auto;
@@ -1511,8 +2007,8 @@ const examCountdown = computed(() => {
   font-size: 13px;
 }
 .account-btn.signed-in {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
 }
 
 .panel {
@@ -1521,14 +2017,15 @@ const examCountdown = computed(() => {
   border-radius: 16px;
   padding: 28px;
   margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(var(--ink-rgb), 0.04), 0 8px 24px rgba(var(--ink-rgb), 0.05);
 }
 
 .exam-banner {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: linear-gradient(90deg, rgba(248, 113, 113, 0.15), rgba(125, 211, 252, 0.10));
-  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: linear-gradient(90deg, rgba(var(--bad-rgb), 0.15), rgba(var(--accent-rgb), 0.10));
+  border: 1px solid rgba(var(--bad-rgb), 0.35);
   border-radius: 12px;
   padding: 10px 16px;
   margin-bottom: 14px;
@@ -1555,9 +2052,21 @@ const examCountdown = computed(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: 26px;
+.panel h3,
+.panel h4 {
+  position: relative;
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+}
+.panel h3::after,
+.panel h4::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 28px;
+  height: 2px;
+  background: var(--accent);
 }
 .muted {
   color: var(--muted);
@@ -1565,35 +2074,20 @@ const examCountdown = computed(() => {
   margin: 0 0 20px;
   line-height: 1.6;
 }
-.hero-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin: 20px 0 24px;
-}
-.hero-stat {
-  background: var(--panel-2);
-  border-radius: 12px;
-  padding: 14px;
-  text-align: center;
-}
-.hero-stat-num {
-  font-size: 22px;
-  font-weight: 700;
-}
-.hero-stat-label {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 4px;
-}
 
 .primary {
   background: var(--accent);
-  color: #0a1620;
-  border: none;
-  border-radius: 10px;
+  color: var(--on-accent);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  border-radius: 14px;
   padding: 10px 18px;
   font-weight: 700;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.primary:active {
+  transform: translateY(4px);
+  box-shadow: 0 0 0 var(--ink);
 }
 .primary.big {
   width: 100%;
@@ -1605,7 +2099,7 @@ const examCountdown = computed(() => {
   font-size: 13px;
   margin-left: 10px;
 }
-.primary:hover { filter: brightness(1.1); }
+.primary:hover { filter: brightness(1.04); }
 
 .danger {
   background: transparent;
@@ -1643,6 +2137,320 @@ const examCountdown = computed(() => {
   font-weight: 600;
   letter-spacing: 0.5px;
 }
+.quiz-title.disp { font-size: 20px; letter-spacing: 0.1em; white-space: nowrap; }
+.session-meta.disp { font-size: 13px; gap: 8px; letter-spacing: 0.04em; color: var(--muted); white-space: nowrap; }
+.session-bar { gap: 8px; }
+.session-bar .btn-ghost.arcade { white-space: nowrap; flex-shrink: 0; }
+.drill-panel .session-meta.disp .ok,
+.drill-panel .session-meta.disp .ng { color: var(--panel); }
+.session-clock { font-variant-numeric: tabular-nums; opacity: 0.8; }
+
+/* 描邊版按鈕(結束 / 看答案 / 喇叭) */
+.btn-ghost.arcade {
+  background: var(--panel);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  border-radius: 12px;
+  font-weight: 700;
+  padding: 8px 14px;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.btn-ghost.arcade.small { padding: 6px 12px; font-size: 12px; }
+.btn-ghost.arcade:active { transform: translateY(3px); box-shadow: 0 0 0 var(--ink); }
+.speak-btn.arcade {
+  background: var(--panel);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  width: 48px;
+  height: 48px;
+}
+.speak-btn.arcade:active { transform: translateY(3px); box-shadow: 0 0 0 var(--ink); }
+
+/* 魂ゲージ */
+.gauge {
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  background: var(--panel-2);
+  margin: -8px 0 6px;
+}
+.gauge-cell {
+  flex: 1;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.25s, box-shadow 0.25s;
+}
+.gauge-cell.on {
+  background: var(--star);
+  box-shadow: inset 0 -3px 0 rgba(var(--ink-rgb), 0.18);
+}
+.gauge.full .gauge-cell.on { background: var(--good); }
+.gauge-cell.on.good { background: var(--good); }
+.gauge-cell.on.bad { background: var(--bad); }
+.gauge-fill.time { background: var(--accent); }
+.gauge.low .gauge-fill.time { background: var(--bad); }
+.chip-tag.chip-test { background: var(--star); }
+.chip-tag.chip-oni { background: var(--bad); color: var(--panel); }
+.session-meta.disp .timer { font-size: 16px; color: var(--ink); }
+.session-meta.disp .ok { color: var(--good); }
+.session-meta.disp .ng { color: var(--bad); }
+.hint-row .quiz-hint { margin: 0; font-size: 11px; }
+.gauge-bar { flex: 1; height: 12px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.gauge-fill { display: block; height: 100%; background: var(--star); transition: width 0.3s ease; }
+
+/* コンボ */
+.combo-row { height: 34px; display: flex; justify-content: center; align-items: center; position: relative; }
+.combo-pill {
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: var(--star);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  color: var(--ink);
+}
+.pop-enter-active { animation: pop-in 0.25s cubic-bezier(0.2, 1.4, 0.4, 1); }
+.pop-leave-active { transition: opacity 0.12s; position: absolute; }
+.pop-leave-to { opacity: 0; }
+@keyframes pop-in {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* ===== 練習 / 測驗 / 衝刺 的彩色填充 ===== */
+.panel.session {
+  position: relative;
+  overflow: hidden;
+  --band: var(--accent);
+  --ring: var(--accent);
+}
+.panel.session.focus-panel { --band: var(--accent); --ring: var(--accent); }
+.panel.session.test-panel { --band: var(--star); --ring: var(--star); }
+.panel.session.drill-panel { --band: var(--bad); --ring: var(--bad); }
+.panel.session.trace-panel { --band: var(--good); --ring: var(--good); }
+/* 頂部彩色市松格帶,session-bar 與量表坐在上面 */
+.panel.session::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 128px;
+  background-color: var(--band);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.28) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.28) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.28) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.28) 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 12px 12px;
+  border-bottom: 3px solid var(--ink);
+  z-index: 0;
+  pointer-events: none;
+}
+.panel.session > * { position: relative; }
+.panel.session .gauge { background: var(--panel); }
+.drill-panel .session-meta.disp .timer { color: var(--panel); }
+.drill-panel .quiz-title,
+.drill-panel .session-meta.disp { color: var(--panel); }
+
+/* 鼓面卡片:外圈彩色鼓身 + 內圈白色鼓面 */
+.kana-face-wrap {
+  position: relative;
+  width: 244px;
+  height: 244px;
+  margin: 4px auto 14px;
+}
+.kana-face-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--ring);
+  border: 4px solid var(--ink);
+  box-shadow: 0 8px 0 var(--ink);
+}
+.kana-face {
+  position: absolute;
+  inset: 20px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 4px solid var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s, border-color 0.15s;
+}
+.kana-face { flex-direction: column; }
+.kana-face .kana { margin: 0; font-size: 118px; }
+.kana-face.with-reading .kana { font-size: 100px; margin-top: -6px; }
+.kana-reading {
+  font-size: 26px;
+  letter-spacing: 0.14em;
+  padding-left: 0.14em;
+  color: var(--accent-text);
+  line-height: 1;
+  margin-top: -4px;
+}
+.new-card-note { font-size: 12px; }
+.focus-card[data-state='good'] .kana-face {
+  background: rgba(var(--good-rgb), 0.18);
+  transform: scale(1.04);
+}
+.focus-card[data-state='bad'] .kana-face {
+  background: rgba(var(--bad-rgb), 0.16);
+  animation: shake 0.3s;
+}
+.kana-face-wrap .speak-btn {
+  position: absolute;
+  right: 2px;
+  bottom: 10px;
+}
+
+/* 標籤 */
+.chip-tag {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 700;
+}
+.chip-new { background: var(--star); }
+.chip-focus { background: var(--accent); }
+.focus-progress-dots { display: inline-flex; gap: 4px; align-items: center; margin-left: 4px; }
+.focus-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--panel);
+  transition: background 0.2s;
+}
+.focus-dot.filled { background: var(--star); }
+
+/* 完成畫面 */
+.panel.session.celebrate { position: relative; overflow: hidden; }
+/* 放射光墊在最底下,其餘內容(文字、卡片、按鈕)都疊在它上面 */
+.panel.session.celebrate > .sunburst { z-index: 0; }
+.panel.session.celebrate > :not(.sunburst) { position: relative; z-index: 1; }
+/* 旋轉放射光 */
+.sunburst {
+  position: absolute;
+  inset: -60%;
+  background: repeating-conic-gradient(
+    rgba(242, 193, 78, 0.22) 0deg 9deg,
+    transparent 9deg 18deg
+  );
+  animation: sunburst-spin 28s linear infinite;
+  pointer-events: none;
+  mask-image: radial-gradient(circle at center, #000 0%, rgba(0, 0, 0, 0.55) 35%, transparent 62%);
+  -webkit-mask-image: radial-gradient(circle at center, #000 0%, rgba(0, 0, 0, 0.55) 35%, transparent 62%);
+}
+@keyframes sunburst-spin { to { transform: rotate(360deg); } }
+.done-banner { position: relative; text-align: center; margin: 4px 0 18px; }
+.done-title {
+  font-size: 52px;
+  line-height: 1.1;
+  color: var(--bad);
+  paint-order: stroke fill;
+  -webkit-text-stroke: 7px var(--panel);
+  text-shadow: 4px 5px 0 var(--ink);
+  animation: title-pop 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+.test-done-panel:not(.passed) .done-title { color: var(--ink); text-shadow: 0 4px 0 rgba(var(--ink-rgb), 0.18); }
+@keyframes title-pop {
+  from { transform: scale(0.3) rotate(-8deg); opacity: 0; }
+  to { transform: scale(1) rotate(0); opacity: 1; }
+}
+.full-combo {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: var(--star);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  transform: rotate(-4deg);
+  animation: badge-pop 0.5s 0.35s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+@keyframes badge-pop {
+  from { transform: rotate(-4deg) scale(0); }
+  to { transform: rotate(-4deg) scale(1); }
+}
+.done-star { position: absolute; animation: twinkle 1.6s ease-in-out infinite; }
+.done-star.s1 { left: 8%; top: -6px; }
+.done-star.s2 { right: 12%; top: 4px; animation-delay: 0.4s; }
+.done-star.s3 { right: 4%; bottom: 8px; animation-delay: 0.9s; }
+@keyframes twinkle {
+  0%, 100% { transform: scale(0.85) rotate(-10deg); opacity: 0.7; }
+  50% { transform: scale(1.15) rotate(10deg); opacity: 1; }
+}
+.done-stat.good { background: rgba(var(--good-rgb), 0.22); }
+.done-stat.bad { background: rgba(var(--bad-rgb), 0.18); }
+.done-stat.combo { background: var(--star-soft); }
+.done-stat { animation: stat-rise 0.45s 0.15s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.done-stat:nth-child(2) { animation-delay: 0.25s; }
+.done-stat:nth-child(3) { animation-delay: 0.35s; }
+@keyframes stat-rise {
+  from { transform: translateY(18px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sunburst, .done-title, .full-combo, .done-star, .done-stat { animation: none; }
+}
+.done-sub { font-size: 13px; color: var(--muted); margin-top: 6px; letter-spacing: 0.08em; }
+.done-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.done-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 6px;
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  background: var(--panel);
+}
+.done-num { font-size: 28px; line-height: 1; }
+.done-actions { display: flex; flex-direction: column; gap: 10px; }
+.done-actions .btn-ghost.big { width: 100%; }
+.mode-pill { position: relative; }
+.mode-pill.ready { animation: ready-bounce 1.6s ease-in-out infinite; }
+.mode-badge {
+  position: absolute;
+  top: -12px;
+  right: -6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--star);
+  border: 2px solid var(--ink);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+@keyframes ready-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mode-pill.ready { animation: none; }
+}
+.done-label { font-size: 11px; color: var(--muted); font-weight: 700; }
+
 .quiz-hint {
   font-size: 12px;
   margin: -10px 0 18px;
@@ -1676,7 +2484,7 @@ const examCountdown = computed(() => {
   padding: 6px 10px;
   border: 1px solid var(--bad);
   border-radius: 8px;
-  background: rgba(239, 68, 68, 0.08);
+  background: rgba(var(--bad-rgb), 0.08);
   font-size: 18px;
 }
 .quiz-failed-romaji {
@@ -1684,8 +2492,8 @@ const examCountdown = computed(() => {
   color: var(--muted);
 }
 .quiz-correct-chip {
-  border-color: rgba(34, 197, 94, 0.55) !important;
-  background: rgba(34, 197, 94, 0.10) !important;
+  border-color: rgba(var(--good-rgb), 0.55) !important;
+  background: rgba(var(--good-rgb), 0.10) !important;
 }
 .drill-summary-list {
   display: flex;
@@ -1795,7 +2603,7 @@ const examCountdown = computed(() => {
 }
 .learn-tag {
   font-size: 11px;
-  color: #0a1620;
+  color: var(--on-accent);
   background: var(--accent);
   padding: 3px 10px;
   border-radius: 999px;
@@ -1808,11 +2616,10 @@ const examCountdown = computed(() => {
   font-size: 14px;
   letter-spacing: 1px;
 }
-.focus-dot { color: var(--border); transition: color 0.2s; }
-.focus-dot.filled { color: var(--accent); }
 .learn-hint {
-  background: rgba(125, 211, 252, 0.08);
-  border: 1px dashed rgba(125, 211, 252, 0.4);
+  background: var(--star-soft);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
   border-radius: 12px;
   padding: 12px 16px;
   margin: 0 auto 18px;
@@ -1831,7 +2638,7 @@ const examCountdown = computed(() => {
 .learn-hint-romaji {
   font-size: 28px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: 0.1em;
   font-variant: small-caps;
 }
@@ -1847,9 +2654,10 @@ const examCountdown = computed(() => {
   max-width: 280px;
   font-size: 28px;
   text-align: center;
-  background: var(--panel-2);
-  border: 2px solid var(--border);
-  border-radius: 12px;
+  background: var(--panel);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  border-radius: 16px;
   color: var(--text);
   padding: 12px 14px;
   outline: none;
@@ -1857,8 +2665,9 @@ const examCountdown = computed(() => {
   font-variant: small-caps;
   transition: border-color 0.15s;
 }
-.answer-input:focus { border-color: var(--accent); }
-.answer-input.good { border-color: var(--good); }
+.answer-input::placeholder { font-variant: normal; letter-spacing: 0.06em; }
+.answer-input:focus { border-color: var(--accent-text); }
+.answer-input.good { border-color: var(--good); background: rgba(var(--good-rgb), 0.14); }
 .answer-input.bad { border-color: var(--bad); animation: shake 0.3s; }
 
 @keyframes shake {
@@ -1923,8 +2732,8 @@ const examCountdown = computed(() => {
 }
 .toggle.active {
   background: var(--accent);
-  color: #0a1620;
-  border-color: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -1965,10 +2774,10 @@ const examCountdown = computed(() => {
   display: inline-block;
   flex-shrink: 0;
 }
-.cal-cell.s0 { background: rgba(255, 255, 255, 0.05); }
-.cal-cell.s1 { background: rgba(125, 211, 252, 0.22); }
-.cal-cell.s2 { background: rgba(125, 211, 252, 0.42); }
-.cal-cell.s3 { background: rgba(125, 211, 252, 0.66); }
+.cal-cell.s0 { background: rgba(var(--ink-rgb), 0.06); }
+.cal-cell.s1 { background: rgba(var(--accent-rgb), 0.22); }
+.cal-cell.s2 { background: rgba(var(--accent-rgb), 0.42); }
+.cal-cell.s3 { background: rgba(var(--accent-rgb), 0.66); }
 .cal-cell.s4 { background: var(--accent); }
 
 .pool-legend {
@@ -2052,23 +2861,23 @@ const examCountdown = computed(() => {
 .kana-grid-cell.pool-bottom {
   background: linear-gradient(
     to right,
-    rgba(239, 68, 68, 0.30) var(--acc-pct),
+    rgba(var(--bad-rgb), 0.30) var(--acc-pct),
     transparent var(--acc-pct)
   );
-  border-color: rgba(239, 68, 68, 0.40);
+  border-color: rgba(var(--bad-rgb), 0.40);
 }
 .kana-grid-cell.pool-top {
   background: linear-gradient(
     to right,
-    rgba(34, 197, 94, 0.30) var(--acc-pct),
+    rgba(var(--good-rgb), 0.30) var(--acc-pct),
     transparent var(--acc-pct)
   );
-  border-color: rgba(34, 197, 94, 0.40);
+  border-color: rgba(var(--good-rgb), 0.40);
 }
 .kana-grid-cell.pool-mid {
   background: linear-gradient(
     to right,
-    rgba(125, 211, 252, 0.18) var(--acc-pct),
+    rgba(var(--accent-rgb), 0.18) var(--acc-pct),
     transparent var(--acc-pct)
   );
 }
@@ -2188,40 +2997,6 @@ const examCountdown = computed(() => {
 .pool-tag.pool-unintroduced { color: var(--muted); opacity: 0.5; }
 .pool-tag.pool-locked { color: var(--muted); opacity: 0.35; }
 
-.stage-box {
-  margin: 12px auto 16px;
-  max-width: 420px;
-  padding: 14px 18px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel-2);
-}
-.stage-title {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.stage-num {
-  font-size: 12px;
-  color: var(--accent);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-}
-.stage-label { font-size: 15px; font-weight: 600; }
-.stage-chars {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin: 10px 0 6px;
-}
-.stage-char {
-  font-size: 30px;
-  font-weight: 600;
-  line-height: 1;
-}
-.stage-note { font-size: 13px; line-height: 1.6; margin: 6px 0 0; }
 .stage-result {
   margin: 0 auto 12px;
   max-width: 420px;
@@ -2233,8 +3008,8 @@ const examCountdown = computed(() => {
 }
 .stage-result.pass {
   color: var(--good);
-  border-color: rgba(34, 197, 94, 0.4);
-  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(var(--good-rgb), 0.4);
+  background: rgba(var(--good-rgb), 0.08);
 }
 .trace-chips {
   display: flex;
@@ -2254,9 +3029,9 @@ const examCountdown = computed(() => {
   cursor: pointer;
 }
 .trace-chip.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(125, 211, 252, 0.12);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 .trace-wrap {
   max-width: 340px;
@@ -2274,7 +3049,7 @@ const examCountdown = computed(() => {
 .trace-romaji {
   font-size: 26px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: 0.08em;
 }
 .trace-tools {
@@ -2291,19 +3066,245 @@ const examCountdown = computed(() => {
 .trace-note { font-size: 12px; line-height: 1.6; text-align: center; margin: 0; }
 .stage-result.fail {
   color: var(--bad);
-  border-color: rgba(239, 68, 68, 0.4);
-  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(var(--bad-rgb), 0.4);
+  background: rgba(var(--bad-rgb), 0.08);
 }
 
-.hero-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
 .btn-ghost.big {
   padding: 14px 28px;
   font-size: 16px;
-  border-radius: 12px;
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 700;
+}
+.btn-ghost.big:active {
+  transform: translateY(4px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+/* ===== 首頁:鼓面 + 難度 + 關卡列表 ===== */
+.hero-taiko {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.drum-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 4px;
+}
+.drum {
+  width: 210px;
+  height: 210px;
+  border-radius: 999px;
+  background: var(--bad);
+  border: 4px solid var(--ink);
+  box-shadow: 0 8px 0 var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.drum-face {
+  width: 164px;
+  height: 164px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 4px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.drum-sub {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+.drum-label {
+  font-size: 58px;
+  line-height: 1.05;
+  color: var(--ink);
+}
+.drum-chars {
+  font-size: 16px;
+  letter-spacing: 0.3em;
+  padding-left: 0.3em;
+  color: var(--bad);
+}
+.drum-badges {
+  display: flex;
+  gap: 8px;
+  margin-top: 22px;
+  position: relative;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--star);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+}
+.badge-pill-alt { background: var(--panel); }
+.track-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(var(--ink-rgb), 0.35);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  position: relative;
+}
+.start-btn {
+  width: 100%;
+  height: 62px;
+  margin-top: 26px;
+  border-radius: 18px;
+  background: var(--accent-text);
+  color: var(--panel);
+  font-size: 22px;
+  letter-spacing: 0.24em;
+  padding-left: 0.24em;
+  border: 3px solid var(--ink);
+  box-shadow: 0 5px 0 var(--ink);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.start-btn:active {
+  transform: translateY(5px);
+  box-shadow: 0 0 0 var(--ink);
+}
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.mode-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 4px;
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+  background: var(--panel);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.mode-pill:active {
+  transform: translateY(3px);
+  box-shadow: 0 0 0 var(--ink);
+}
+.mode-jp { font-size: 10px; letter-spacing: 0.08em; }
+.mode-zh { font-size: 12px; font-weight: 700; }
+.mode-normal { background: var(--accent); }
+.mode-oni { background: var(--bad); color: var(--panel); }
+.stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.stage-list-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.stage-list-title { font-size: 18px; letter-spacing: 0.1em; }
+.stage-list-rule {
+  flex-grow: 1;
+  height: 3px;
+  background: var(--ink);
+  border-radius: 2px;
+}
+.stage-list-sub {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 62px;
+  padding-right: 14px;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  overflow: hidden;
+}
+.stage-tab {
+  width: 58px;
+  height: 100%;
+  font-size: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 3px solid var(--ink);
+  flex-shrink: 0;
+}
+.stage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex-grow: 1;
+  min-width: 0;
+}
+.stage-row-chars { font-size: 16px; letter-spacing: 0.2em; }
+.stage-row-status { font-size: 11px; font-weight: 700; }
+.stage-stars { display: flex; gap: 2px; flex-shrink: 0; }
+.stage-row.passed .stage-tab { background: var(--good); color: var(--panel); }
+.stage-row.passed .stage-row-status { color: var(--good); }
+.stage-row.current { background: var(--star-soft); }
+.stage-row.current .stage-tab { background: var(--bad); color: var(--panel); }
+.stage-row.current .stage-row-status { color: var(--bad); }
+.stage-row.locked {
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+  box-shadow: none;
+  color: var(--muted);
+}
+.stage-row.locked .stage-tab {
+  background: var(--border);
+  color: var(--muted);
+  border-right-color: var(--border-strong);
+}
+.stage-row.locked .stage-row-chars,
+.stage-row.locked .stage-row-status { color: var(--muted); font-weight: 500; }
+.stage-lock { flex-shrink: 0; }
+.stage-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 46px;
+  border-radius: 14px;
+  border: 3px dashed var(--border-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
 }
 .focus-progress-bar {
   height: 6px;
@@ -2317,7 +3318,6 @@ const examCountdown = computed(() => {
   background: var(--accent);
   transition: width 0.3s ease;
 }
-.focus-done-panel h3 { margin: 0 0 16px; }
 .focus-done-note {
   font-size: 13px;
   margin: 16px 0 24px;
@@ -2327,8 +3327,6 @@ const examCountdown = computed(() => {
 @media (max-width: 560px) {
   .kana { font-size: 110px; }
   .topbar-stats { gap: 6px; }
-  .chip { padding: 4px 8px; }
-  .chip-val { font-size: 12px; }
   /* 手機格子太窄 → 改成垂直排:假名上、stats 一樣直排但放在下面 */
   .kana-grid-cell {
     flex-direction: column;
@@ -2351,21 +3349,21 @@ const examCountdown = computed(() => {
   .kana-grid-cell.pool-bottom {
     background: linear-gradient(
       to top,
-      rgba(239, 68, 68, 0.30) var(--acc-pct),
+      rgba(var(--bad-rgb), 0.30) var(--acc-pct),
       transparent var(--acc-pct)
     );
   }
   .kana-grid-cell.pool-top {
     background: linear-gradient(
       to top,
-      rgba(34, 197, 94, 0.30) var(--acc-pct),
+      rgba(var(--good-rgb), 0.30) var(--acc-pct),
       transparent var(--acc-pct)
     );
   }
   .kana-grid-cell.pool-mid {
     background: linear-gradient(
       to top,
-      rgba(125, 211, 252, 0.18) var(--acc-pct),
+      rgba(var(--accent-rgb), 0.18) var(--acc-pct),
       transparent var(--acc-pct)
     );
   }

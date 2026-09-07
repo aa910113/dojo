@@ -1,13 +1,28 @@
+/* 和風淡色主題:生成り(和紙米白)底 + 墨字 + 藍染強調 + 朱紅只給印章/錯誤 */
 :root {
-  --bg: #0f1115;
-  --panel: #1a1d24;
-  --panel-2: #232730;
-  --text: #e8eaed;
-  --muted: #8a93a3;
-  --accent: #7dd3fc;
-  --good: #34d399;
-  --bad: #f87171;
-  --border: #2a2f3a;
+  --bg: #f8f6f0;
+  --panel: #fdfcf9;
+  --panel-2: #f1ede4;
+  --text: #3a3f47;
+  --muted: #8a9099;
+  /* 淺蔥色:淡藍當填色;文字用稍深一階的縹色才看得清 */
+  --accent: #9ccbe0;
+  --accent-rgb: 156, 203, 224;
+  --accent-text: #4f8db3;
+  --on-accent: #26313a;
+  --good: #6cb58d;
+  --good-rgb: 108, 181, 141;
+  --bad: #d9756a;
+  --bad-rgb: 217, 117, 106;
+  --border: #e5dfd3;
+  --border-strong: #cfc8b9;
+  --ink: #3a3f47;
+  --ink-rgb: 58, 63, 71;
+  --accent-check: #b7dbea;
+  --star: #f2c14e;
+  --star-soft: #fff7e0;
+  --font-display: 'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'Zen Kaku Gothic New', sans-serif;
+  --font-heading: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -16,11 +31,17 @@ html, body, #__nuxt {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans',
-    'Yu Gothic', 'Meiryo', system-ui, sans-serif;
+  font-family: 'Zen Kaku Gothic New', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  letter-spacing: 0.04em;
 }
 
 button {
@@ -32,4 +53,4 @@ input {
   font-family: inherit;
 }
 
-a { color: var(--accent); }
+a { color: var(--accent-text); }

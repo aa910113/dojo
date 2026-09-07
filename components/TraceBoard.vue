@@ -21,7 +21,7 @@ const hasInk = computed(() => strokes.value.length > 0)
 
 function inkColor(): string {
   if (!wrapEl.value) return '#7dd3fc'
-  return getComputedStyle(wrapEl.value).getPropertyValue('--accent').trim() || '#7dd3fc'
+  return getComputedStyle(wrapEl.value).getPropertyValue('--accent-text').trim() || '#4f8db3'
 }
 
 function resize() {
@@ -184,8 +184,8 @@ defineExpose({ clear, undo, hasInk })
   font-family: 'Klee One', 'Hiragino Maru Gothic ProN', 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif;
   font-size: 74px;
   font-weight: 400;
-  fill: var(--text);
-  opacity: 0.16;
+  fill: var(--accent-text);
+  opacity: 0.22;
 }
 .trace-ink {
   position: absolute;

@@ -23,6 +23,8 @@ export interface Settings {
   newPerDay: number
   sessionMinutes: number
   autoPlaySound: boolean
+  sfx: boolean
+  bgm: boolean
   examDate: string
   examLabel: string
 }
@@ -79,6 +81,8 @@ const DEFAULTS: Settings = {
   newPerDay: 6,
   sessionMinutes: 15,
   autoPlaySound: true,
+  sfx: true,
+  bgm: true,
   examDate: '2026-07-05',
   examLabel: 'JLPT N4',
 }
@@ -743,7 +747,22 @@ export const useSRS = () => {
       .filter((x) => x.acc >= 0.9 && x.reps >= topMinReps && !bottomSet.has(x.id))
       .map((x) => x.id)
 
-    const pool = [...fresh, ...bottom, ...top]
+    // 目前關卡(還沒通過的那關)的字永遠在池子裡,直到測驗過關為止
+    const current = stageInfo.value.current
+    const currentIds = current
+      ? current.cardIds.filter((id) => persist.value.cards[id]?.introduced)
+      : []
+
+    const seen = new Set<string>()
+    const pool: string[] = []
+    for (const id of [...fresh, ...currentIds, ...bottom, ...top]) {
+      if (!seen.has(id)) {
+        seen.add(id)
+        pool.push(id)
+      }
+    }
+    // 保險:全部條件都不符合(例如每張都剛好連對 3 次但還沒練滿 5 次)→ 複習全部已學的字
+    if (pool.length === 0) pool.push(...intro.map((x) => x.id))
     // Fisher-Yates 洗牌,讓出題順序隨機
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
