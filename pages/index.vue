@@ -30,7 +30,7 @@ function next_focus_card_or_finish() {
   locked.value = false
   isNewCard.value = !getCardState(card.id)?.introduced
   showAnswer.value = isNewCard.value
-  if (isNewCard.value && settings.value.autoPlaySound) speak(card.char)
+  if (isNewCard.value && settings.value.autoPlaySound) speakKana(card.char)
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -326,7 +326,7 @@ function startTrace() {
   traceShowGuide.value = true
   traceActive.value = true
   sessionStarted.value = true
-  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+  if (settings.value.autoPlaySound && traceCard.value) speakKana(traceCard.value.char)
 }
 
 function finishTrace() {
@@ -339,16 +339,16 @@ function traceGo(delta: number) {
   if (n === 0) return
   sfx('ka')
   traceIndex.value = (traceIndex.value + delta + n) % n
-  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+  if (settings.value.autoPlaySound && traceCard.value) speakKana(traceCard.value.char)
 }
 
 function traceJump(i: number) {
   traceIndex.value = i
-  if (settings.value.autoPlaySound && traceCard.value) speak(traceCard.value.char)
+  if (settings.value.autoPlaySound && traceCard.value) speakKana(traceCard.value.char)
 }
 
 function playTrace() {
-  if (traceCard.value) speak(traceCard.value.char)
+  if (traceCard.value) speakKana(traceCard.value.char)
 }
 
 const { user: cloudUser, status: syncStatus, signInWithGoogle, signOut: cloudSignOut, init: initCloudSync, flush: flushCloud } = useCloudSync()
@@ -664,7 +664,7 @@ function checkAnswer(value: string) {
 function revealFocusAnswer() {
   if (!current.value) return
   showAnswer.value = true
-  if (settings.value.autoPlaySound) speak(current.value.char)
+  if (settings.value.autoPlaySound) speakKana(current.value.char)
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -686,11 +686,25 @@ function loadVoice() {
   const voices = window.speechSynthesis.getVoices()
   const ja = voices.filter((v) => v.lang.startsWith('ja'))
   if (ja.length === 0) return
-  // 優先本地語音 (Kyoko)，避免 Chrome 上不穩定的網路語音 (Google 日本語)
-  jaVoice.value = ja.find((v) => v.localService) ?? ja[0]
+  // 語音品質排序:iOS/macOS 的加強版 (Enhanced/Premium/Siri) > 本地 Kyoko/O-ren > 其他本地 > 網路語音
+  const score = (v: SpeechSynthesisVoice) => {
+    const name = v.name.toLowerCase()
+    let sc = 0
+    if (/enhanced|premium|siri|neural/.test(name)) sc += 100
+    if (/kyoko|o-ren|hattori|ichiro|otoya/.test(name)) sc += 40
+    if (v.localService) sc += 20
+    if (/google/.test(name)) sc -= 10
+    return sc
+  }
+  jaVoice.value = [...ja].sort((a, b) => score(b) - score(a))[0]
 }
 
-function speak(text: string) {
+// 教學用發音:單個假名丟給 TTS 會被切得很短,改成「短音、長音」連唸 (あ、あー)
+function speakKana(char: string) {
+  speak(`${char}、${char}ー`, 0.8)
+}
+
+function speak(text: string, rate = 0.85) {
   if (typeof window === 'undefined' || !window.speechSynthesis) {
     console.warn('[speak] speechSynthesis 不支援')
     return
@@ -699,7 +713,7 @@ function speak(text: string) {
   if (!jaVoice.value) loadVoice()
   const u = new SpeechSynthesisUtterance(text)
   u.lang = 'ja-JP'
-  u.rate = 0.8
+  u.rate = rate
   u.pitch = 1
   if (jaVoice.value) u.voice = jaVoice.value
   u.onerror = (e) => {
@@ -713,7 +727,7 @@ function speak(text: string) {
 }
 
 function playCurrent() {
-  if (current.value) speak(current.value.char)
+  if (current.value) speakKana(current.value.char)
 }
 
 let speechKeepAlive: number | null = null
