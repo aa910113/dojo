@@ -30,7 +30,6 @@ function next_focus_card_or_finish() {
   locked.value = false
   isNewCard.value = !getCardState(card.id)?.introduced
   showAnswer.value = isNewCard.value
-  speakToggle = null
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -326,7 +325,6 @@ function startTrace() {
   traceShowGuide.value = true
   traceActive.value = true
   sessionStarted.value = true
-  speakToggle = null
 }
 
 function finishTrace() {
@@ -339,12 +337,10 @@ function traceGo(delta: number) {
   if (n === 0) return
   sfx('ka')
   traceIndex.value = (traceIndex.value + delta + n) % n
-  speakToggle = null
 }
 
 function traceJump(i: number) {
   traceIndex.value = i
-  speakToggle = null
 }
 
 function playTrace() {
@@ -699,13 +695,9 @@ function loadVoice() {
   jaVoice.value = [...ja].sort((a, b) => score(b) - score(a))[0]
 }
 
-// 喇叭按鈕:同一個字第一次點唸短音,第二次點唸長音 (あー),之後交替;換字後重新從短音開始
-let speakToggle: { char: string; next: 'short' | 'long' } | null = null
+// 喇叭按鈕:只唸該假名本身的短音,不加長音,避免新手把「あー」當成正確讀法
 function speakKana(char: string) {
-  const mode = speakToggle && speakToggle.char === char ? speakToggle.next : 'short'
-  if (mode === 'short') speak(char, 0.8)
-  else speak(`${char}ー`, 0.8)
-  speakToggle = { char, next: mode === 'short' ? 'long' : 'short' }
+  speak(char, 0.8)
 }
 
 function speak(text: string, rate = 0.85) {
