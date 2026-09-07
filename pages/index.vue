@@ -30,7 +30,7 @@ function next_focus_card_or_finish() {
   locked.value = false
   isNewCard.value = !getCardState(card.id)?.introduced
   showAnswer.value = isNewCard.value
-  if (isNewCard.value && settings.value.autoPlaySound) speakKana(card.char)
+  speakToggle = null
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -326,7 +326,7 @@ function startTrace() {
   traceShowGuide.value = true
   traceActive.value = true
   sessionStarted.value = true
-  if (settings.value.autoPlaySound && traceCard.value) speakKana(traceCard.value.char)
+  speakToggle = null
 }
 
 function finishTrace() {
@@ -339,12 +339,12 @@ function traceGo(delta: number) {
   if (n === 0) return
   sfx('ka')
   traceIndex.value = (traceIndex.value + delta + n) % n
-  if (settings.value.autoPlaySound && traceCard.value) speakKana(traceCard.value.char)
+  speakToggle = null
 }
 
 function traceJump(i: number) {
   traceIndex.value = i
-  if (settings.value.autoPlaySound && traceCard.value) speakKana(traceCard.value.char)
+  speakToggle = null
 }
 
 function playTrace() {
@@ -699,9 +699,13 @@ function loadVoice() {
   jaVoice.value = [...ja].sort((a, b) => score(b) - score(a))[0]
 }
 
-// 教學用發音:單個假名丟給 TTS 會被切得很短,改成「短音、長音」連唸 (あ、あー)
+// 喇叭按鈕:同一個字第一次點唸短音,第二次點唸長音 (あー),之後交替;換字後重新從短音開始
+let speakToggle: { char: string; next: 'short' | 'long' } | null = null
 function speakKana(char: string) {
-  speak(`${char}、${char}ー`, 0.8)
+  const mode = speakToggle && speakToggle.char === char ? speakToggle.next : 'short'
+  if (mode === 'short') speak(char, 0.8)
+  else speak(`${char}ー`, 0.8)
+  speakToggle = { char, next: mode === 'short' ? 'long' : 'short' }
 }
 
 function speak(text: string, rate = 0.85) {
