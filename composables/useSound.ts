@@ -78,8 +78,17 @@ const TRACKS: Track[] = [
   },
 ]
 
+// 結果畫面專用:輕快、不換曲
+const RESULT_TRACK: Track = {
+  name: '祝', bpm: 120, loopSteps: 32,
+  don: [0, 8, 16, 24, 28], ka: [4, 6, 12, 20, 22, 30],
+  melody: N('G5 A5 B5 - D6 - B5 A5 G5 - E5 G5 A5 - - - B5 A5 G5 E5 D5 - E5 G5 A5 - - - G5 - - -'), melodyStep: 1,
+  voice: 'pluck', noteDur: 0.3,
+  bass: [n('G2'), n('G2'), n('D3'), n('D3'), n('E3'), n('E3'), n('D3'), n('G2')], loops: 1_000_000,
+}
+
 // 過關音效用的音
-const D5 = n('D5'), E5 = n('E5'), G5 = n('G5'), A5 = n('A5'), D6 = n('D6')
+const D5 = n('D5'), E5 = n('E5'), G5 = n('G5'), A5 = n('A5'), B5 = n('B5'), D6 = n('D6'), G4 = n('G4'), A4 = n('A4')
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
@@ -298,6 +307,8 @@ function bgmTick() {
 }
 
 let trackChanged: (() => void) | null = null
+let bgmKind: 'home' | 'result' = 'home'
+let playingKind: 'home' | 'result' = 'home'
 
 export const useSound = () => {
   const sfxOn = useState<boolean>('snd-sfx', () => true)
@@ -315,10 +326,10 @@ export const useSound = () => {
     if (!c) return
     if (c.state === 'suspended') c.resume().catch(() => {})
     unlocked.value = true
-    if (bgmWanted.value && bgmOn.value && !bgmPlaying.value) startBgm()
+    if (bgmWanted.value && bgmOn.value && !bgmPlaying.value) startBgm(bgmKind)
   }
 
-  function sfx(kind: 'don' | 'ka' | 'fail' | 'clear') {
+  function sfx(kind: 'don' | 'ka' | 'fail' | 'clear' | 'fanfare') {
     if (!sfxOn.value) return
     const c = ensure()
     if (!c || !sfxBus) return
@@ -336,6 +347,21 @@ export const useSound = () => {
         playPluck(t, 220, sfxBus, 0.25, 0.9)
         playPluck(t + 0.16, 174.61, sfxBus, 0.4, 0.9)
         break
+      case 'fanfare': {
+        // 練習完成:鼓聲滾奏加速 → 上行旋律 → 收尾大鼓
+        const roll = [0, 0.14, 0.27, 0.39, 0.5, 0.6, 0.69, 0.77, 0.84, 0.9]
+        roll.forEach((dt, i) => (i % 2 === 0 ? playDon(t + dt, sfxBus!, 0.7) : playKa(t + dt, sfxBus!, 0.6)))
+        const tune = [G4, A4, D5, E5, G5, A5, B5, D6]
+        tune.forEach((f, i) => {
+          playPluck(t + 1.0 + i * 0.11, f, sfxBus!, 0.45, 0.9)
+        })
+        playFlute(t + 1.9, D6, sfxBus, 0.9, 0.8)
+        playPluck(t + 1.9, D6, sfxBus, 0.9, 1)
+        playDon(t + 1.9, sfxBus, 1)
+        playKa(t + 2.15, sfxBus, 0.8)
+        playDon(t + 2.3, sfxBus, 1)
+        break
+      }
       case 'clear': {
         // 上行陽音階小旋律 + 收尾大鼓
         const seq = [D5, E5, G5, A5, D6]
@@ -347,14 +373,22 @@ export const useSound = () => {
     }
   }
 
-  function startBgm() {
+  // 'home' = 隨機曲庫;'result' = 結果畫面專用曲
+  function startBgm(kind: 'home' | 'result' = 'home') {
     bgmWanted.value = true
+    bgmKind = kind
     if (!bgmOn.value) return
     const c = ensure()
     if (!c || !unlocked.value) return
-    if (bgmPlaying.value) return
+    if (bgmPlaying.value) {
+      if (playingKind === kind) return
+      // 切換曲種:直接停掉再重開
+      hardStop()
+    }
     if (c.state === 'suspended') c.resume().catch(() => {})
-    setTrack(pickTrack(track))
+    if (kind === 'result') setTrack(RESULT_TRACK)
+    else setTrack(pickTrack(track === RESULT_TRACK ? undefined : track))
+    playingKind = kind
     trackName.value = track.name
     nextStepTime = c.currentTime + 0.05
     bgmBus!.gain.cancelScheduledValues(c.currentTime)
@@ -362,6 +396,18 @@ export const useSound = () => {
     bgmBus!.gain.exponentialRampToValueAtTime(0.16, c.currentTime + 0.6)
     bgmTimer = window.setInterval(bgmTick, 25)
     bgmPlaying.value = true
+  }
+
+  function hardStop() {
+    if (bgmTimer != null) {
+      clearInterval(bgmTimer)
+      bgmTimer = null
+    }
+    if (ctx && bgmBus) {
+      bgmBus.gain.cancelScheduledValues(ctx.currentTime)
+      bgmBus.gain.setValueAtTime(0.0001, ctx.currentTime)
+    }
+    bgmPlaying.value = false
   }
 
   function stopBgm() {
@@ -400,7 +446,7 @@ export const useSound = () => {
       stopBgm()
       bgmWanted.value = wanted
     } else if (bgmWanted.value) {
-      startBgm()
+      startBgm(bgmKind)
     }
   }
 
