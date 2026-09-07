@@ -1,13 +1,20 @@
+/* 和風淡色主題:生成り(和紙米白)底 + 墨字 + 藍染強調 + 朱紅只給印章/錯誤 */
 :root {
-  --bg: #0f1115;
-  --panel: #1a1d24;
-  --panel-2: #232730;
-  --text: #e8eaed;
-  --muted: #8a93a3;
-  --accent: #7dd3fc;
-  --good: #34d399;
-  --bad: #f87171;
-  --border: #2a2f3a;
+  --bg: #f4f0e7;
+  --panel: #fcfaf5;
+  --panel-2: #eee9dd;
+  --text: #23262d;
+  --muted: #6f7683;
+  --accent: #2e5c8a;
+  --accent-rgb: 46, 92, 138;
+  --on-accent: #ffffff;
+  --good: #3b8a5e;
+  --good-rgb: 59, 138, 94;
+  --bad: #be4234;
+  --bad-rgb: 190, 66, 52;
+  --border: #dcd5c6;
+  --ink-rgb: 35, 38, 45;
+  --font-heading: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -18,9 +25,14 @@ html, body, #__nuxt {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans',
-    'Yu Gothic', 'Meiryo', system-ui, sans-serif;
+  font-family: 'Zen Kaku Gothic New', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Hiragino Sans', 'Yu Gothic', 'Meiryo', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  letter-spacing: 0.04em;
 }
 
 button {

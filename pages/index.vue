@@ -789,7 +789,10 @@ const examCountdown = computed(() => {
 <template>
   <div class="page">
     <header class="topbar">
-      <div class="brand">五十音 · 打字練習</div>
+      <div class="brand">
+        <span class="brand-main">五十音 · 打字練習</span>
+        <span class="brand-sub">ゴジュウオン・タイピング</span>
+      </div>
       <div class="topbar-stats">
         <div class="chip">
           <span class="chip-label">今日</span>
@@ -1465,9 +1468,20 @@ const examCountdown = computed(() => {
   gap: 12px;
 }
 .brand {
-  font-weight: 600;
-  font-size: 16px;
-  letter-spacing: 0.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-main {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 0.12em;
+}
+.brand-sub {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--muted);
 }
 .topbar-stats {
   display: flex;
@@ -1521,14 +1535,15 @@ const examCountdown = computed(() => {
   border-radius: 16px;
   padding: 28px;
   margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(var(--ink-rgb), 0.04), 0 8px 24px rgba(var(--ink-rgb), 0.05);
 }
 
 .exam-banner {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: linear-gradient(90deg, rgba(248, 113, 113, 0.15), rgba(125, 211, 252, 0.10));
-  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: linear-gradient(90deg, rgba(var(--bad-rgb), 0.15), rgba(var(--accent-rgb), 0.10));
+  border: 1px solid rgba(var(--bad-rgb), 0.35);
   border-radius: 12px;
   padding: 10px 16px;
   margin-bottom: 14px;
@@ -1555,6 +1570,22 @@ const examCountdown = computed(() => {
   font-variant-numeric: tabular-nums;
 }
 
+.panel h3,
+.panel h4 {
+  position: relative;
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+}
+.panel h3::after,
+.panel h4::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 28px;
+  height: 2px;
+  background: var(--accent);
+}
 .hero h1 {
   margin: 0 0 8px;
   font-size: 26px;
@@ -1589,7 +1620,7 @@ const examCountdown = computed(() => {
 
 .primary {
   background: var(--accent);
-  color: #0a1620;
+  color: var(--on-accent);
   border: none;
   border-radius: 10px;
   padding: 10px 18px;
@@ -1676,7 +1707,7 @@ const examCountdown = computed(() => {
   padding: 6px 10px;
   border: 1px solid var(--bad);
   border-radius: 8px;
-  background: rgba(239, 68, 68, 0.08);
+  background: rgba(var(--bad-rgb), 0.08);
   font-size: 18px;
 }
 .quiz-failed-romaji {
@@ -1684,8 +1715,8 @@ const examCountdown = computed(() => {
   color: var(--muted);
 }
 .quiz-correct-chip {
-  border-color: rgba(34, 197, 94, 0.55) !important;
-  background: rgba(34, 197, 94, 0.10) !important;
+  border-color: rgba(var(--good-rgb), 0.55) !important;
+  background: rgba(var(--good-rgb), 0.10) !important;
 }
 .drill-summary-list {
   display: flex;
@@ -1795,7 +1826,7 @@ const examCountdown = computed(() => {
 }
 .learn-tag {
   font-size: 11px;
-  color: #0a1620;
+  color: var(--on-accent);
   background: var(--accent);
   padding: 3px 10px;
   border-radius: 999px;
@@ -1811,8 +1842,8 @@ const examCountdown = computed(() => {
 .focus-dot { color: var(--border); transition: color 0.2s; }
 .focus-dot.filled { color: var(--accent); }
 .learn-hint {
-  background: rgba(125, 211, 252, 0.08);
-  border: 1px dashed rgba(125, 211, 252, 0.4);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px dashed rgba(var(--accent-rgb), 0.4);
   border-radius: 12px;
   padding: 12px 16px;
   margin: 0 auto 18px;
@@ -1923,7 +1954,7 @@ const examCountdown = computed(() => {
 }
 .toggle.active {
   background: var(--accent);
-  color: #0a1620;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -1965,10 +1996,10 @@ const examCountdown = computed(() => {
   display: inline-block;
   flex-shrink: 0;
 }
-.cal-cell.s0 { background: rgba(255, 255, 255, 0.05); }
-.cal-cell.s1 { background: rgba(125, 211, 252, 0.22); }
-.cal-cell.s2 { background: rgba(125, 211, 252, 0.42); }
-.cal-cell.s3 { background: rgba(125, 211, 252, 0.66); }
+.cal-cell.s0 { background: rgba(var(--ink-rgb), 0.06); }
+.cal-cell.s1 { background: rgba(var(--accent-rgb), 0.22); }
+.cal-cell.s2 { background: rgba(var(--accent-rgb), 0.42); }
+.cal-cell.s3 { background: rgba(var(--accent-rgb), 0.66); }
 .cal-cell.s4 { background: var(--accent); }
 
 .pool-legend {
@@ -2052,23 +2083,23 @@ const examCountdown = computed(() => {
 .kana-grid-cell.pool-bottom {
   background: linear-gradient(
     to right,
-    rgba(239, 68, 68, 0.30) var(--acc-pct),
+    rgba(var(--bad-rgb), 0.30) var(--acc-pct),
     transparent var(--acc-pct)
   );
-  border-color: rgba(239, 68, 68, 0.40);
+  border-color: rgba(var(--bad-rgb), 0.40);
 }
 .kana-grid-cell.pool-top {
   background: linear-gradient(
     to right,
-    rgba(34, 197, 94, 0.30) var(--acc-pct),
+    rgba(var(--good-rgb), 0.30) var(--acc-pct),
     transparent var(--acc-pct)
   );
-  border-color: rgba(34, 197, 94, 0.40);
+  border-color: rgba(var(--good-rgb), 0.40);
 }
 .kana-grid-cell.pool-mid {
   background: linear-gradient(
     to right,
-    rgba(125, 211, 252, 0.18) var(--acc-pct),
+    rgba(var(--accent-rgb), 0.18) var(--acc-pct),
     transparent var(--acc-pct)
   );
 }
@@ -2217,10 +2248,13 @@ const examCountdown = computed(() => {
   margin: 10px 0 6px;
 }
 .stage-char {
-  font-size: 30px;
-  font-weight: 600;
+  font-family: var(--font-heading);
+  font-size: 32px;
+  font-weight: 700;
   line-height: 1;
+  color: var(--accent);
 }
+.stage-chars { gap: 16px; }
 .stage-note { font-size: 13px; line-height: 1.6; margin: 6px 0 0; }
 .stage-result {
   margin: 0 auto 12px;
@@ -2233,8 +2267,8 @@ const examCountdown = computed(() => {
 }
 .stage-result.pass {
   color: var(--good);
-  border-color: rgba(34, 197, 94, 0.4);
-  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(var(--good-rgb), 0.4);
+  background: rgba(var(--good-rgb), 0.08);
 }
 .trace-chips {
   display: flex;
@@ -2256,7 +2290,7 @@ const examCountdown = computed(() => {
 .trace-chip.active {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(125, 211, 252, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 .trace-wrap {
   max-width: 340px;
@@ -2291,8 +2325,8 @@ const examCountdown = computed(() => {
 .trace-note { font-size: 12px; line-height: 1.6; text-align: center; margin: 0; }
 .stage-result.fail {
   color: var(--bad);
-  border-color: rgba(239, 68, 68, 0.4);
-  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(var(--bad-rgb), 0.4);
+  background: rgba(var(--bad-rgb), 0.08);
 }
 
 .hero-actions {
@@ -2351,21 +2385,21 @@ const examCountdown = computed(() => {
   .kana-grid-cell.pool-bottom {
     background: linear-gradient(
       to top,
-      rgba(239, 68, 68, 0.30) var(--acc-pct),
+      rgba(var(--bad-rgb), 0.30) var(--acc-pct),
       transparent var(--acc-pct)
     );
   }
   .kana-grid-cell.pool-top {
     background: linear-gradient(
       to top,
-      rgba(34, 197, 94, 0.30) var(--acc-pct),
+      rgba(var(--good-rgb), 0.30) var(--acc-pct),
       transparent var(--acc-pct)
     );
   }
   .kana-grid-cell.pool-mid {
     background: linear-gradient(
       to top,
-      rgba(125, 211, 252, 0.18) var(--acc-pct),
+      rgba(var(--accent-rgb), 0.18) var(--acc-pct),
       transparent var(--acc-pct)
     );
   }
