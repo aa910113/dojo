@@ -488,11 +488,31 @@ function toggleBgm() {
 watch(() => settings.value.sfx, (v) => setSfx(v), { immediate: true })
 watch(() => settings.value.bgm, (v) => setBgm(v), { immediate: true })
 
-// 首頁播 BGM,進任何模式就停
+// 首頁播 BGM,進任何模式就停;結果畫面放過關音效 + 專用曲
 watch(sessionStarted, (started) => {
   if (started) stopBgm()
-  else startBgm()
+  else startBgm('home')
 }, { immediate: true })
+
+const onDoneScreen = computed(() => focusFinished.value || testFinished.value || drillFinished.value)
+let resultBgmTimer: number | null = null
+watch(onDoneScreen, (done) => {
+  if (resultBgmTimer != null) {
+    clearTimeout(resultBgmTimer)
+    resultBgmTimer = null
+  }
+  if (done) {
+    // 測驗過關已經有更盛大的 clear 音效,其餘結束畫面放 fanfare
+    if (!(testFinished.value && lastStageResult.value?.passed)) sfx('fanfare')
+    // 音效結束後接結果曲
+    resultBgmTimer = window.setTimeout(() => {
+      resultBgmTimer = null
+      if (onDoneScreen.value) startBgm('result')
+    }, 2600)
+  } else if (sessionStarted.value) {
+    stopBgm()
+  }
+})
 
 function onFirstGesture() {
   unlockAudio()
