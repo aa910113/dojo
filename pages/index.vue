@@ -2,7 +2,7 @@
 import type { KanaEntry, Stage } from '~/data/kana'
 import { ALL_KANA, STAGES } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -512,6 +512,48 @@ watch(sessionStarted, (started) => {
 }, { immediate: true })
 
 const onDoneScreen = computed(() => focusFinished.value || testFinished.value || drillFinished.value)
+
+// === 練習計時 ===
+// 在任何模式裡(重點 / 測驗 / 衝刺 / 描紅)每秒累加,結果畫面與分頁切到背景時暫停;
+// 每 10 秒寫進今日統計一次,結束時把剩餘的補上
+const studying = computed(() => sessionStarted.value && !onDoneScreen.value)
+const sessionSeconds = ref(0)
+let studyTimer: number | null = null
+let pendingStudySeconds = 0
+
+function flushStudySeconds() {
+  if (pendingStudySeconds > 0) {
+    addStudySeconds(pendingStudySeconds)
+    pendingStudySeconds = 0
+  }
+}
+function startStudyTimer() {
+  if (studyTimer != null) return
+  studyTimer = window.setInterval(() => {
+    sessionSeconds.value += 1
+    pendingStudySeconds += 1
+    if (pendingStudySeconds >= 10) flushStudySeconds()
+  }, 1000)
+}
+function stopStudyTimer() {
+  if (studyTimer != null) {
+    clearInterval(studyTimer)
+    studyTimer = null
+  }
+  flushStudySeconds()
+}
+watch(studying, (on) => {
+  if (on) startStudyTimer()
+  else stopStudyTimer()
+})
+watch(sessionStarted, (started) => {
+  if (started) sessionSeconds.value = 0
+})
+function fmtClock(sec: number) {
+  const m = Math.floor(sec / 60)
+  const s2 = sec % 60
+  return `${m}:${String(s2).padStart(2, '0')}`
+}
 // 彩帶強度:測驗過關最大、零失誤次之、一般完成最小
 const celebrationIntensity = computed(() => {
   if (testFinished.value && lastStageResult.value?.passed) return 2
@@ -565,8 +607,10 @@ watch(sessionStarted, () => nextTick(onViewportChange))
 function onVisibility() {
   if (document.visibilityState === 'hidden') {
     stopBgm()
-  } else if (!sessionStarted.value) {
-    startBgm()
+    stopStudyTimer()
+  } else {
+    if (!sessionStarted.value) startBgm()
+    if (studying.value) startStudyTimer()
   }
 }
 
@@ -802,6 +846,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibility)
   window.visualViewport?.removeEventListener('resize', onViewportChange)
   window.visualViewport?.removeEventListener('scroll', onViewportChange)
+  stopStudyTimer()
   stopBgm()
 })
 
@@ -1564,6 +1609,7 @@ const examCountdown = computed(() => {
             <span class="ok">✓ {{ testCorrectIds.length }}</span>
             <span class="ng">✗ {{ testWrongIds.length }}</span>
             <span class="muted">{{ testAnswered }} / {{ testTotal }}</span>
+            <span class="session-clock muted">{{ fmtClock(sessionSeconds) }}</span>
           </div>
           <button class="btn-ghost" @click="finishTest">結束</button>
         </div>
@@ -1605,7 +1651,7 @@ const examCountdown = computed(() => {
         <div class="done-banner">
           <div class="done-title disp">{{ lastStageResult?.passed ? '合格！' : '終了' }}</div>
           <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
-          <div class="done-sub">測驗 · {{ testTotal }} 張</div>
+          <div class="done-sub">測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
         </div>
         <div v-if="lastStageResult" class="stage-result" :class="lastStageResult.passed ? 'pass' : 'fail'">
           <template v-if="lastStageResult.passed">
@@ -1652,6 +1698,7 @@ const examCountdown = computed(() => {
           <div class="quiz-title disp">重點練習</div>
           <div class="session-meta disp">
             <span>{{ focusCorrectCount }} / {{ focusInitialSize }}</span>
+            <span class="session-clock">{{ fmtClock(sessionSeconds) }}</span>
           </div>
           <button class="btn-ghost arcade" @click="finishFocus">結束</button>
         </div>
@@ -1743,7 +1790,7 @@ const examCountdown = computed(() => {
           <svg class="done-star s3" width="22" height="22" viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
           <div class="done-title disp">完了！</div>
           <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
-          <div class="done-sub">重點練習 · {{ focusInitialSize }} 張全部出隊</div>
+          <div class="done-sub">重點練習 · {{ focusInitialSize }} 張全部出隊 · {{ fmtClock(sessionSeconds) }}</div>
         </div>
         <div class="done-stats">
           <div class="done-stat good">
@@ -1838,10 +1885,6 @@ const examCountdown = computed(() => {
   width: 100vw;
   margin-left: -50vw;
   height: 444px;
-}
-/* 背景音樂關閉時沒有曲名標籤,頭帶跟著縮短 */
-.page.no-track .ichimatsu-band {
-  height: 404px;
   background-color: var(--accent);
   background-image:
     linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%),
@@ -1855,6 +1898,8 @@ const examCountdown = computed(() => {
   animation: ichimatsu-scroll 6s linear infinite;
   will-change: background-position;
 }
+/* 背景音樂關閉時沒有曲名標籤,頭帶跟著縮短 */
+.page.no-track .ichimatsu-band { height: 404px; }
 @keyframes ichimatsu-scroll {
   from { background-position: 0 0, 14px 14px; }
   to { background-position: 28px 28px, 42px 42px; }
@@ -2054,6 +2099,7 @@ const examCountdown = computed(() => {
 }
 .quiz-title.disp { font-size: 20px; letter-spacing: 0.1em; }
 .session-meta.disp { font-size: 15px; letter-spacing: 0.06em; color: var(--muted); }
+.session-clock { font-variant-numeric: tabular-nums; opacity: 0.8; }
 
 /* 描邊版按鈕(結束 / 看答案 / 喇叭) */
 .btn-ghost.arcade {
