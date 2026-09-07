@@ -2352,7 +2352,7 @@ const examCountdown = computed(() => {
   font-variant: small-caps;
   transition: border-color 0.15s;
 }
-.answer-input:focus { border-color: var(--accent-text); }
+.answer-input::placeholder { font-variant: normal; letter-spacing: 0.06em; }
 .answer-input:focus { border-color: var(--accent-text); }
 .answer-input.good { border-color: var(--good); background: rgba(var(--good-rgb), 0.14); }
 .answer-input.bad { border-color: var(--bad); animation: shake 0.3s; }
