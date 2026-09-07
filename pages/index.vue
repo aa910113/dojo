@@ -1429,7 +1429,7 @@ const examCountdown = computed(() => {
           <button class="mode-pill mode-normal" :class="{ ready: stageReadyToTest }" @click="startTest">
             <span v-if="stageReadyToTest" class="mode-badge disp">解鎖！</span>
             <span class="mode-jp disp">ふつう</span>
-            <span class="mode-zh">測驗</span>
+            <span class="mode-zh">隨機測驗</span>
           </button>
           <button class="mode-pill mode-oni" @click="startDrill">
             <span class="mode-jp disp">おに</span>
@@ -1604,7 +1604,7 @@ const examCountdown = computed(() => {
 
       <section v-else-if="testActive && !testFinished" class="panel session test-panel">
         <div class="session-bar">
-          <div class="quiz-title">測驗</div>
+          <div class="quiz-title disp">隨機測驗</div>
           <div class="session-meta">
             <span class="ok">✓ {{ testCorrectIds.length }}</span>
             <span class="ng">✗ {{ testWrongIds.length }}</span>
@@ -1651,7 +1651,7 @@ const examCountdown = computed(() => {
         <div class="done-banner">
           <div class="done-title disp">{{ lastStageResult?.passed ? '合格！' : '終了' }}</div>
           <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
-          <div class="done-sub">測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
+          <div class="done-sub">隨機測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
         </div>
         <div v-if="lastStageResult" class="stage-result" :class="lastStageResult.passed ? 'pass' : 'fail'">
           <template v-if="lastStageResult.passed">
