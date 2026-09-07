@@ -1608,8 +1608,9 @@ const examCountdown = computed(() => {
           </div>
 
           <div class="kana-face-wrap">
-            <div class="kana-face">
+            <div class="kana-face" :class="{ 'with-reading': isNewCard }">
               <div class="kana">{{ current.char }}</div>
+              <div v-if="isNewCard" class="kana-reading disp">{{ current.romaji }}</div>
             </div>
             <button
               v-if="ttsSupported"
@@ -1635,12 +1636,6 @@ const examCountdown = computed(() => {
             </span>
           </div>
 
-          <div v-if="isNewCard" class="learn-hint">
-            <span class="learn-hint-label">讀法</span>
-            <span class="learn-hint-romaji disp">{{ current.romaji }}</span>
-            <span class="learn-hint-note">新字:照著打一次就記為已學</span>
-          </div>
-
           <input
             ref="inputEl"
             v-model="input"
@@ -1650,11 +1645,14 @@ const examCountdown = computed(() => {
             autocapitalize="off"
             autocorrect="off"
             spellcheck="false"
-            placeholder="輸入羅馬字"
+            :placeholder="isNewCard ? `照著打 ${current.romaji}` : '輸入羅馬字'"
             @keydown.enter.prevent="checkAnswer(input)"
           />
 
-          <div v-if="!isNewCard" class="hint-row">
+          <div v-if="isNewCard" class="hint-row">
+            <span class="new-card-note muted">新字:照著讀法打一次就記為已學,之後不再提示</span>
+          </div>
+          <div v-else class="hint-row">
             <button
               v-if="!showAnswer"
               class="btn-ghost arcade small"
@@ -1736,6 +1734,9 @@ const examCountdown = computed(() => {
 .page.in-session.kb-open .kana-face { width: 140px; height: 140px; margin: 0 auto 8px; }
 .page.in-session.kb-open .kana-face { box-shadow: 0 4px 0 var(--ink); }
 .page.in-session.kb-open .kana-face .kana { font-size: 84px; }
+.page.in-session.kb-open .kana-face.with-reading .kana { font-size: 70px; }
+.page.in-session.kb-open .kana-reading { font-size: 18px; }
+.page.in-session.kb-open .new-card-note { display: none; }
 .page.in-session.kb-open .kana-face-wrap .speak-btn { width: 40px; height: 40px; right: -6px; bottom: -2px; }
 .page.in-session.kb-open .kana { font-size: 96px; margin: 0; }
 .page.in-session.kb-open .tag-row { margin-bottom: 8px; }
@@ -2057,7 +2058,18 @@ const examCountdown = computed(() => {
   justify-content: center;
   transition: background 0.15s, transform 0.15s, border-color 0.15s;
 }
+.kana-face { flex-direction: column; }
 .kana-face .kana { margin: 0; font-size: 132px; }
+.kana-face.with-reading .kana { font-size: 112px; margin-top: -6px; }
+.kana-reading {
+  font-size: 26px;
+  letter-spacing: 0.14em;
+  padding-left: 0.14em;
+  color: var(--accent-text);
+  line-height: 1;
+  margin-top: -4px;
+}
+.new-card-note { font-size: 12px; }
 .focus-card[data-state='good'] .kana-face {
   background: rgba(var(--good-rgb), 0.18);
   transform: scale(1.04);
