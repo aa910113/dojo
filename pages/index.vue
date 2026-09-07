@@ -2193,6 +2193,9 @@ const examCountdown = computed(() => {
 
 /* 完成畫面 */
 .panel.session.celebrate { position: relative; overflow: hidden; }
+/* 放射光墊在最底下,其餘內容(文字、卡片、按鈕)都疊在它上面 */
+.panel.session.celebrate > .sunburst { z-index: 0; }
+.panel.session.celebrate > :not(.sunburst) { position: relative; z-index: 1; }
 /* 旋轉放射光 */
 .sunburst {
   position: absolute;
