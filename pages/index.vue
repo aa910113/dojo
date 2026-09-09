@@ -207,57 +207,97 @@ function scriptShort(script: string) {
   return script === 'hiragana' ? '平假名' : '片假名'
 }
 
-// === 手寫(看羅馬字寫假名)===
-// 虛線田字格 + 淡色範字,用手指 / 筆描;不辨識、不記分,純練字形
-const traceActive = ref(false)
-const traceIndex = ref(0)
-// 答案(正確字形)預設藏起來:先憑記憶寫,寫完才疊上來對照
-const traceShowGuide = ref(false)
+// === 手寫測驗(看羅馬字寫假名,隨機出題,每題自評)===
 const traceBoard = ref<{ clear: () => void; undo: () => void; hasInk: boolean } | null>(null)
+const writeQueue = ref<string[]>([])
+const writeTotal = ref(0)
+const writeCorrectIds = ref<string[]>([])
+const writeWrongIds = ref<string[]>([])
+const writeResults = ref<('ok' | 'ng')[]>([])
+// 寫完按「對答案」才把正確字形疊上來,接著自評
+const writeRevealed = ref(false)
+const writeFinished = ref(false)
 
-// 範圍 = 目前關卡的字;全部通關後用最後一關
-const traceCards = computed<KanaEntry[]>(() => {
-  const list = stages.value
-  const stage = stageInfo.value.current ?? list[list.length - 1]
-  return stage.cardIds
+const traceActive = computed(() => writeQueue.value.length > 0 || writeFinished.value)
+const traceCard = computed<KanaEntry | null>(
+  () => ALL_KANA.find((k) => k.id === writeQueue.value[0]) ?? null,
+)
+const writeAnswered = computed(() => writeCorrectIds.value.length + writeWrongIds.value.length)
+const writeWrongCards = computed(() =>
+  writeWrongIds.value
     .map((id) => ALL_KANA.find((k) => k.id === id))
-    .filter((k): k is KanaEntry => !!k)
-})
-const traceCard = computed<KanaEntry | null>(() => traceCards.value[traceIndex.value] ?? null)
+    .filter((k): k is KanaEntry => !!k),
+)
 
 function startTrace() {
   sfx('ka')
-  traceIndex.value = 0
-  traceShowGuide.value = false
-  traceActive.value = true
+  const list = stages.value
+  const stage = stageInfo.value.current ?? list[list.length - 1]
+  const ids = (stage?.cardIds ?? []).filter((id) => isUnlocked(id))
+  if (ids.length === 0) {
+    alert('目前沒有可測驗的字 — 請確認設定裡有勾選目前關卡的字母')
+    return
+  }
+  // 洗牌出題,每張只問一次
+  const queue = [...ids]
+  for (let i = queue.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[queue[i], queue[j]] = [queue[j], queue[i]]
+  }
+  writeQueue.value = queue
+  writeTotal.value = queue.length
+  writeCorrectIds.value = []
+  writeWrongIds.value = []
+  writeResults.value = []
+  writeRevealed.value = false
+  writeFinished.value = false
+  combo.value = 0
+  comboBest.value = 0
+  sessionCorrect.value = 0
+  sessionWrong.value = 0
   sessionStarted.value = true
 }
 
 function finishTrace() {
-  traceActive.value = false
+  writeQueue.value = []
+  writeTotal.value = 0
+  writeCorrectIds.value = []
+  writeWrongIds.value = []
+  writeResults.value = []
+  writeRevealed.value = false
+  writeFinished.value = false
   sessionStarted.value = false
 }
 
-function traceGo(delta: number) {
-  const n = traceCards.value.length
-  if (n === 0) return
+function writeReveal() {
   sfx('ka')
-  traceIndex.value = (traceIndex.value + delta + n) % n
-  traceShowGuide.value = false
+  writeRevealed.value = true
 }
 
-function traceJump(i: number) {
-  traceIndex.value = i
-  traceShowGuide.value = false
+// 自評:只記在這場測驗裡,不寫進 SRS —— 手寫是另一種能力,
+// 而且自評不夠可靠,混進打字的準確率會影響重點練習選卡
+function writeJudge(ok: boolean) {
+  const card = traceCard.value
+  if (!card) return
+  sfx(ok ? 'don' : 'fail')
+  if (ok) {
+    writeCorrectIds.value = [...writeCorrectIds.value, card.id]
+    sessionCorrect.value += 1
+    bumpCombo()
+  } else {
+    writeWrongIds.value = [...writeWrongIds.value, card.id]
+    sessionWrong.value += 1
+    resetCombo()
+  }
+  writeResults.value = [...writeResults.value, ok ? 'ok' : 'ng']
+  writeQueue.value = writeQueue.value.slice(1)
+  writeRevealed.value = false
+  traceBoard.value?.clear()
+  if (writeQueue.value.length === 0) {
+    writeFinished.value = true
+    flushCloud()
+  }
 }
-
-function traceReveal() {
-  sfx('ka')
-  traceShowGuide.value = !traceShowGuide.value
-}
-
-// 一起學模式下同一行的平假名與片假名羅馬字相同,chip 要標示是哪一種
-const traceHasBothScripts = computed(() => new Set(traceCards.value.map((k) => k.script)).size > 1)
 
 function playTrace() {
   if (traceCard.value) speakKana(traceCard.value.char)
@@ -410,7 +450,7 @@ watch(sessionStarted, (started) => {
   else startBgm('home')
 }, { immediate: true })
 
-const onDoneScreen = computed(() => focusFinished.value || testFinished.value)
+const onDoneScreen = computed(() => focusFinished.value || testFinished.value || writeFinished.value)
 
 // === 練習計時 ===
 // 在任何模式裡(重點練習 / 拼音測驗 / 手寫測驗)每秒累加,結果畫面與分頁切到背景時暫停;
@@ -1415,27 +1455,33 @@ const examCountdown = computed(() => {
         </div>
       </section>
 
-      <section v-else-if="traceActive" class="panel session trace-panel">
+      <section v-else-if="traceActive && !writeFinished" class="panel session trace-panel">
         <div class="session-bar">
           <div class="quiz-title disp">手寫測驗</div>
           <div class="session-meta disp">
-            <span>{{ traceIndex + 1 }} / {{ traceCards.length }}</span>
+            <span class="ok">✓{{ writeCorrectIds.length }}</span>
+            <span class="ng">✗{{ writeWrongIds.length }}</span>
+            <span>{{ writeAnswered }} / {{ writeTotal }}</span>
+            <span class="session-clock">{{ fmtClock(sessionSeconds) }}</span>
           </div>
           <button class="btn-ghost arcade" @click="finishTrace">結束</button>
         </div>
-        <div class="trace-chips">
-          <button
-            v-for="(k, i) in traceCards"
-            :key="k.id"
-            class="trace-chip"
-            :class="{ active: i === traceIndex }"
-            @click="traceJump(i)"
-          >
-            <span>{{ k.romaji }}</span>
-            <span v-if="traceHasBothScripts" class="chip-scr">{{ k.script === 'hiragana' ? '平' : '片' }}</span>
-          </button>
+
+        <div class="gauge">
+          <span
+            v-for="i in writeTotal"
+            :key="i"
+            class="gauge-cell"
+            :class="writeResults[i - 1] === 'ok' ? 'on good' : writeResults[i - 1] === 'ng' ? 'on bad' : ''"
+          ></span>
         </div>
+
         <div v-if="traceCard" class="trace-wrap">
+          <div class="combo-row">
+            <transition name="pop">
+              <span v-if="combo >= 2" :key="combo" class="combo-pill disp">{{ combo }} コンボ</span>
+            </transition>
+          </div>
           <div class="trace-head">
             <span class="chip-tag">{{ traceCard.script === 'hiragana' ? '平假名' : '片假名' }}</span>
             <span class="trace-romaji disp">{{ traceCard.romaji }}</span>
@@ -1443,25 +1489,61 @@ const examCountdown = computed(() => {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
             </button>
           </div>
-          <p class="trace-prompt">寫出這個音的假名</p>
-          <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="traceShowGuide" />
+          <p class="trace-prompt">{{ writeRevealed ? '和正確字形比對,再選你寫對了沒' : '寫出這個音的假名' }}</p>
+
+          <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="writeRevealed" />
+
           <div class="trace-tools">
-            <button
-              class="toggle"
-              :class="{ active: traceShowGuide }"
-              @click="traceReveal"
-            >{{ traceShowGuide ? '答案:開' : '對答案' }}</button>
             <button class="btn-ghost arcade small" @click="traceBoard?.undo()">上一筆</button>
             <button class="btn-ghost arcade small" @click="traceBoard?.clear()">清除</button>
           </div>
-          <div class="trace-nav">
-            <button class="btn-ghost big disp" @click="traceGo(-1)">← 上一個</button>
-            <button class="primary big disp" @click="traceGo(1)">下一個 →</button>
+
+          <div v-if="!writeRevealed" class="trace-nav">
+            <button class="primary big disp" @click="writeReveal">對答案</button>
           </div>
+          <div v-else class="trace-nav">
+            <button class="judge-btn wrong disp" @click="writeJudge(false)">沒寫對</button>
+            <button class="judge-btn right disp" @click="writeJudge(true)">寫對了</button>
+          </div>
+
           <p class="muted trace-note">
-            憑記憶寫,寫完按「對答案」把正確字形疊上來比對。完全沒印象就先開著答案描幾次。
+            憑記憶寫,按「對答案」把正確字形疊上來比對,再誠實選寫對了沒。
+            自評只算這場成績,不影響練習與解鎖。
           </p>
         </div>
+      </section>
+
+      <section v-else-if="writeFinished" class="panel session trace-done-panel celebrate">
+        <div class="sunburst"></div>
+        <div class="done-banner">
+          <div class="done-title disp">終了！</div>
+          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
+          <div class="done-sub">手寫測驗 · {{ writeTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
+        </div>
+        <div class="done-stats">
+          <div class="done-stat good">
+            <span class="done-num disp">{{ writeCorrectIds.length }}</span>
+            <span class="done-label">寫對</span>
+          </div>
+          <div class="done-stat bad">
+            <span class="done-num disp">{{ writeWrongIds.length }}</span>
+            <span class="done-label">沒寫對</span>
+          </div>
+          <div class="done-stat combo">
+            <span class="done-num disp">{{ comboBest }}</span>
+            <span class="done-label">最高コンボ</span>
+          </div>
+        </div>
+        <div v-if="writeWrongCards.length > 0" class="quiz-failed-list">
+          <div class="quiz-failed-label muted">要再練的字 ({{ writeWrongCards.length }})</div>
+          <div class="quiz-failed-chips">
+            <span v-for="k in writeWrongCards" :key="k.id" class="quiz-failed-chip">
+              {{ k.char }}
+              <span class="quiz-failed-romaji">{{ k.romaji }}</span>
+            </span>
+          </div>
+        </div>
+        <button class="primary big disp" @click="finishTrace">回到首頁</button>
       </section>
 
       <section v-else-if="testActive && !testFinished" class="panel session test-panel">
@@ -2097,9 +2179,9 @@ const examCountdown = computed(() => {
 }
 .panel.session > * { position: relative; }
 .panel.session .gauge { background: var(--panel); }
-/* 手寫沒有量表,頭帶只蓋住標題列,chip 排在帶子下面 */
-.panel.session.trace-panel::before { height: 78px; }
-.trace-panel .session-meta.disp { color: var(--ink); opacity: 0.7; }
+.trace-panel .session-meta.disp,
+.trace-panel .session-meta.disp .ok,
+.trace-panel .session-meta.disp .ng { color: var(--ink); }
 /* 鼓面卡片:外圈彩色鼓身 + 內圈白色鼓面 */
 .kana-face-wrap {
   position: relative;
@@ -2867,7 +2949,21 @@ const examCountdown = computed(() => {
   color: var(--muted);
   margin: -4px 0 0;
 }
-.chip-scr { font-size: 10px; opacity: 0.6; margin-left: 3px; }
+.judge-btn {
+  flex: 1;
+  padding: 14px 0;
+  font-size: 16px;
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  color: var(--ink);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.judge-btn:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+.judge-btn.right { background: var(--good); color: var(--panel); }
+.judge-btn.wrong { background: var(--panel); }
+.panel.session.trace-done-panel { --band: var(--good); }
+.trace-done-panel::before { display: none; }
 .trace-tools {
   display: flex;
   justify-content: center;
