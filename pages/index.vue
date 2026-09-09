@@ -208,14 +208,36 @@ function scriptShort(script: string) {
 }
 
 // === 手寫測驗(看羅馬字寫假名,隨機出題,每題自評)===
-const traceBoard = ref<{ clear: () => void; undo: () => void; hasInk: boolean } | null>(null)
+const traceBoard = ref<{
+  clear: () => void
+  undo: () => void
+  hasInk: boolean
+  getStrokes: () => { x: number; y: number }[][]
+} | null>(null)
 const writeQueue = ref<string[]>([])
 const writeTotal = ref(0)
 const writeCorrectIds = ref<string[]>([])
 const writeWrongIds = ref<string[]>([])
 const writeResults = ref<('ok' | 'ng')[]>([])
-// 寫完按「對答案」才把正確字形疊上來,接著自評
+// 寫完按「對答案」才辨識並把正確字形疊上來
 const writeRevealed = ref(false)
+const writeVerdict = ref<RecognizeResult | null>(null)
+// 使用者不同意辨識結果時的改判
+const writeOverride = ref<boolean | null>(null)
+const writeOk = computed(() => writeOverride.value ?? writeVerdict.value?.ok ?? false)
+
+const writeVerdictText = computed(() => {
+  const r = writeVerdict.value
+  if (!r) return ''
+  switch (r.reason) {
+    case 'ok': return '辨識正確'
+    case 'order': return '字形正確,但筆順和標準不同'
+    case 'strokes': return `筆畫數不對 — 這個字 ${r.expectedStrokes} 畫,你寫了 ${r.gotStrokes} 畫`
+    case 'confused': return `比較像「${r.confusedWith}」`
+    case 'empty': return '還沒寫'
+    default: return '認不出來'
+  }
+})
 const writeFinished = ref(false)
 
 const traceActive = computed(() => writeQueue.value.length > 0 || writeFinished.value)
@@ -250,6 +272,8 @@ function startTrace() {
   writeWrongIds.value = []
   writeResults.value = []
   writeRevealed.value = false
+  writeVerdict.value = null
+  writeOverride.value = null
   writeFinished.value = false
   combo.value = 0
   comboBest.value = 0
@@ -265,21 +289,28 @@ function finishTrace() {
   writeWrongIds.value = []
   writeResults.value = []
   writeRevealed.value = false
+  writeVerdict.value = null
+  writeOverride.value = null
   writeFinished.value = false
   sessionStarted.value = false
 }
 
 function writeReveal() {
-  sfx('ka')
-  writeRevealed.value = true
-}
-
-// 自評:只記在這場測驗裡,不寫進 SRS —— 手寫是另一種能力,
-// 而且自評不夠可靠,混進打字的準確率會影響重點練習選卡
-function writeJudge(ok: boolean) {
   const card = traceCard.value
   if (!card) return
-  sfx(ok ? 'don' : 'fail')
+  const strokes = traceBoard.value?.getStrokes() ?? []
+  writeVerdict.value = recognizeKana(strokes, card.char, card.script)
+  writeOverride.value = null
+  writeRevealed.value = true
+  sfx(writeVerdict.value.ok ? 'don' : 'fail')
+}
+
+// 成績只記在這場測驗裡,不寫進 SRS —— 手寫是另一種能力,
+// 混進打字的準確率會影響重點練習選卡
+function writeNext() {
+  const card = traceCard.value
+  if (!card) return
+  const ok = writeOk.value
   if (ok) {
     writeCorrectIds.value = [...writeCorrectIds.value, card.id]
     sessionCorrect.value += 1
@@ -292,6 +323,8 @@ function writeJudge(ok: boolean) {
   writeResults.value = [...writeResults.value, ok ? 'ok' : 'ng']
   writeQueue.value = writeQueue.value.slice(1)
   writeRevealed.value = false
+  writeVerdict.value = null
+  writeOverride.value = null
   traceBoard.value?.clear()
   if (writeQueue.value.length === 0) {
     writeFinished.value = true
@@ -1353,6 +1386,10 @@ const examCountdown = computed(() => {
         <div class="setting-row">
           <button class="danger" @click="confirmReset">清除所有進度</button>
         </div>
+        <p class="setting-note muted credit">
+          手寫辨識的筆順資料衍生自 KanjiVG(Copyright © 2009-2011 Ulrich Apel),
+          採 CC BY-SA 3.0 授權。
+        </p>
       </section>
 
       <section
@@ -1489,7 +1526,11 @@ const examCountdown = computed(() => {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
             </button>
           </div>
-          <p class="trace-prompt">{{ writeRevealed ? '和正確字形比對,再選你寫對了沒' : '寫出這個音的假名' }}</p>
+          <p v-if="!writeRevealed" class="trace-prompt">寫出這個音的假名</p>
+          <div v-else class="verdict" :class="writeOk ? 'good' : 'bad'">
+            <span class="verdict-mark disp">{{ writeOk ? '✓' : '✗' }}</span>
+            <span>{{ writeOverride === null ? writeVerdictText : (writeOk ? '已改判為寫對' : '已改判為沒寫對') }}</span>
+          </div>
 
           <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="writeRevealed" />
 
@@ -1501,14 +1542,22 @@ const examCountdown = computed(() => {
           <div v-if="!writeRevealed" class="trace-nav">
             <button class="primary big disp" @click="writeReveal">對答案</button>
           </div>
-          <div v-else class="trace-nav">
-            <button class="judge-btn wrong disp" @click="writeJudge(false)">沒寫對</button>
-            <button class="judge-btn right disp" @click="writeJudge(true)">寫對了</button>
-          </div>
+          <template v-else>
+            <div class="trace-nav">
+              <button class="primary big disp" @click="writeNext">
+                {{ writeQueue.length > 1 ? '下一題 →' : '看結果 →' }}
+              </button>
+            </div>
+            <div class="trace-tools">
+              <button class="btn-ghost arcade small" @click="writeOverride = !writeOk">
+                {{ writeOk ? '改判為沒寫對' : '改判為寫對了' }}
+              </button>
+            </div>
+          </template>
 
           <p class="muted trace-note">
-            憑記憶寫,按「對答案」把正確字形疊上來比對,再誠實選寫對了沒。
-            自評只算這場成績,不影響練習與解鎖。
+            憑記憶寫,按「對答案」自動比對筆跡並疊上正確字形。判錯了可以自己改判。
+            成績只算這場,不影響練習與解鎖。
           </p>
         </div>
       </section>
@@ -2949,6 +2998,23 @@ const examCountdown = computed(() => {
   color: var(--muted);
   margin: -4px 0 0;
 }
+.verdict {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: -2px auto 0;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 3px solid var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+.verdict.good { background: rgba(var(--good-rgb), 0.25); }
+.verdict.bad { background: rgba(var(--bad-rgb), 0.2); }
+.verdict-mark { font-size: 18px; }
 .judge-btn {
   flex: 1;
   padding: 14px 0;
@@ -3044,6 +3110,7 @@ const examCountdown = computed(() => {
 }
 .stage-row-chars { display: flex; gap: 12px; flex-wrap: wrap; }
 .stage-row-chars.two { font-size: 14px; letter-spacing: 0.12em; }
+.credit { margin-top: 14px; opacity: 0.75; }
 .setting-note {
   font-size: 12px;
   line-height: 1.6;
