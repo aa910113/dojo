@@ -121,7 +121,8 @@ onBeforeUnmount(() => {
   ro?.disconnect()
 })
 
-defineExpose({ clear, undo, hasInk })
+// getStrokes 回傳 [0,1] 相對座標的筆跡,給辨識器用
+defineExpose({ clear, undo, hasInk, getStrokes: () => strokes.value })
 </script>
 
 <template>
