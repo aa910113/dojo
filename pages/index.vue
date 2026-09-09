@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { KanaEntry, Stage } from '~/data/kana'
-import { ALL_KANA, STAGES } from '~/data/kana'
+import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, effectiveAccuracy, stages, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -13,6 +13,32 @@ const focusProgress = computed(() =>
     ? Math.round((focusCorrectCount.value / focusInitialSize.value) * 100)
     : 0,
 )
+
+// 這一回合考打字還是手寫。新字一定先用打字(帶讀法)學過字形,才有東西可以回想
+const focusRound = ref<'type' | 'write'>('type')
+const focusBoard = ref<{
+  clear: () => void
+  undo: () => void
+  hasInk: boolean
+  getStrokes: () => { x: number; y: number }[][]
+  playDemo: () => void
+  stopDemo: () => void
+} | null>(null)
+// 練習時看過寫法就不記分,得再寫對一次才出隊(和打字的「看答案」一致)
+const focusHinted = ref(false)
+const focusRevealed = ref(false)
+const focusVerdict = ref<RecognizeResult | null>(null)
+const focusOverride = ref<boolean | null>(null)
+const focusOk = computed(() => focusOverride.value ?? focusVerdict.value?.ok ?? false)
+const focusVerdictText = computed(() => verdictText(focusVerdict.value))
+
+function pickRound(isNew: boolean): 'type' | 'write' {
+  if (isNew) return 'type'
+  const m = settings.value.practiceMode ?? 'mix'
+  if (m === 'type') return 'type'
+  if (m === 'write') return 'write'
+  return Math.random() < 0.5 ? 'type' : 'write'
+}
 
 function next_focus_card_or_finish() {
   const card = pickFocusCard()
@@ -30,7 +56,66 @@ function next_focus_card_or_finish() {
   locked.value = false
   isNewCard.value = !getCardState(card.id)?.introduced
   showAnswer.value = isNewCard.value
-  nextTick(() => inputEl.value?.focus())
+  focusRound.value = pickRound(isNewCard.value)
+  focusRevealed.value = false
+  focusVerdict.value = null
+  focusOverride.value = null
+  focusHinted.value = false
+  focusBoard.value?.stopDemo()
+  focusBoard.value?.clear()
+  if (focusRound.value === 'type') {
+    nextTick(() => inputEl.value?.focus())
+  } else {
+    // 手寫回合沒有輸入框。焦點狀態不能只靠 focusout ——
+    // 輸入框是被 v-if 移除的,瀏覽器不保證會送出事件,漏掉就會卡在鍵盤版面
+    inputFocused.value = false
+    nextTick(onViewportChange)
+  }
+}
+
+// 看寫法:播一次筆順示範,不記分
+function focusShowStrokes() {
+  sfx('ka')
+  focusHinted.value = true
+  if (settings.value.autoPlaySound && current.value) speakKana(current.value.char)
+  nextTick(() => focusBoard.value?.playDemo())
+}
+
+// 看過寫法後就不判定,直接送回隊尾再練
+function focusHintedNext() {
+  const card = current.value
+  if (!card) return
+  focusAnswer(card.id, false)
+  next_focus_card_or_finish()
+}
+
+// 手寫回合:辨識是客觀判定,所以和打字一樣計入間隔重複
+function focusWriteReveal() {
+  const card = current.value
+  if (!card) return
+  focusVerdict.value = recognizeKana(focusBoard.value?.getStrokes() ?? [], card.char, card.script)
+  focusOverride.value = null
+  focusRevealed.value = true
+  const ok = focusVerdict.value.ok
+  feedback.value = ok ? 'good' : 'bad'
+  sfx(ok ? 'don' : 'fail')
+}
+
+function focusWriteNext() {
+  const card = current.value
+  if (!card) return
+  const ok = focusOk.value
+  if (ok) {
+    review(card.id, true, true)
+    sessionCorrect.value += 1
+    bumpCombo()
+  } else {
+    review(card.id, false, false)
+    sessionWrong.value += 1
+    resetCombo()
+  }
+  focusAnswer(card.id, ok)
+  next_focus_card_or_finish()
 }
 
 function startFocus() {
@@ -49,15 +134,6 @@ function startFocus() {
     return
   }
   next_focus_card_or_finish()
-}
-
-function goTestFromFocus() {
-  endFocusSession()
-  focusFinished.value = false
-  isNewCard.value = false
-  current.value = null
-  input.value = ''
-  startTest()
 }
 
 function finishFocus() {
@@ -148,122 +224,6 @@ const testCorrectCards = computed(() =>
     .filter((k): k is KanaEntry => !!k),
 )
 
-const drillFinished = ref(false)
-const DRILL_SECONDS = 600
-const drillTimePct = computed(() => Math.max(0, Math.min(100, (drillSecondsLeft.value / DRILL_SECONDS) * 100)))
-const drillActive = computed(() => drillPool.value.length > 0 || drillFinished.value)
-let drillTimerHandle: number | null = null
-let drillLastTickAt = 0
-
-const drillTimeText = computed(() => {
-  const s = drillSecondsLeft.value
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return `${m}:${String(r).padStart(2, '0')}`
-})
-
-const drillPoolCards = computed(() =>
-  drillPool.value
-    .map((id) => ALL_KANA.find((k) => k.id === id))
-    .filter((k): k is KanaEntry => !!k),
-)
-
-function next_drill_card_or_finish() {
-  if (drillSecondsLeft.value === 0) {
-    drillFinished.value = true
-    current.value = null
-    if (drillTimerHandle != null) {
-      clearInterval(drillTimerHandle)
-      drillTimerHandle = null
-    }
-    flushCloud()
-    return
-  }
-  const card = pickDrillCard()
-  if (!card) {
-    drillFinished.value = true
-    current.value = null
-    flushCloud()
-    return
-  }
-  current.value = card
-  input.value = ''
-  feedback.value = 'idle'
-  firstTry.value = true
-  wrongCount.value = 0
-  showAnswer.value = false
-  locked.value = false
-  nextTick(() => inputEl.value?.focus())
-}
-
-function startDrill() {
-  sfx('ka')
-  sessionStarted.value = true
-  sessionCorrect.value = 0
-  sessionWrong.value = 0
-  combo.value = 0
-  comboBest.value = 0
-  resetSessionLapses()
-  drillFinished.value = false
-  const n = startDrillSession(600, 6)
-  if (n === 0) {
-    alert('還沒有學過的字可以衝刺 — 先做「重點練習」學目前關卡的字')
-    sessionStarted.value = false
-    return
-  }
-  drillLastTickAt = Date.now()
-  drillTimerHandle = window.setInterval(() => {
-    const now = Date.now()
-    const delta = Math.round((now - drillLastTickAt) / 1000)
-    drillLastTickAt = now
-    if (delta <= 0) return
-    const done = tickDrill(delta)
-    if (done && !drillFinished.value) {
-      // 時間到 → 收尾。若使用者正在打字,讓他的下一個 enter 自動結束。
-      // 這裡僅停 interval,主結束流程交給 next_drill_card_or_finish。
-      if (drillTimerHandle != null) {
-        clearInterval(drillTimerHandle)
-        drillTimerHandle = null
-      }
-      // 若目前沒有 lock(沒有正在收 setTimeout),直接收尾
-      if (!locked.value) {
-        drillFinished.value = true
-        current.value = null
-        flushCloud()
-      }
-    }
-  }, 1000)
-  next_drill_card_or_finish()
-}
-
-function finishDrill() {
-  if (drillTimerHandle != null) {
-    clearInterval(drillTimerHandle)
-    drillTimerHandle = null
-  }
-  endDrillSession()
-  drillFinished.value = false
-  sessionStarted.value = false
-  current.value = null
-  input.value = ''
-}
-
-function skipDrillCard() {
-  if (!current.value) return
-  feedback.value = 'bad'
-  sfx('fail')
-  review(current.value.id, false, false)
-  sessionWrong.value += 1
-  resetCombo()
-  drillAnswer(current.value.id, false)
-  locked.value = true
-  setTimeout(() => next_drill_card_or_finish(), 500)
-}
-
-onBeforeUnmount(() => {
-  if (drillTimerHandle != null) clearInterval(drillTimerHandle)
-})
-
 // === 首頁關卡列表(選曲畫面風) ===
 type StageStatus = 'passed' | 'current' | 'locked'
 interface StageRow {
@@ -278,7 +238,7 @@ interface StageRow {
 
 const stageRows = computed<StageRow[]>(() => {
   const { passed, unlocked, allPassed } = stageInfo.value
-  return STAGES.map((stage, i) => {
+  return stages.value.map((stage, i) => {
     const status: StageStatus = i < passed ? 'passed' : (!allPassed && i === unlocked - 1) ? 'current' : 'locked'
     let introduced = 0
     let accSum = 0
@@ -300,7 +260,7 @@ const stageRows = computed<StageRow[]>(() => {
       total: stage.cardIds.length,
       accuracy: Math.round(accuracy * 100),
       stars,
-      prevLabel: i > 0 ? STAGES[i - 1].label : '',
+      prevLabel: i > 0 ? stages.value[i - 1].label : '',
     }
   })
 })
@@ -317,53 +277,147 @@ const showAllStages = ref(false)
 // 預設只列到目前關卡 + 後面兩關,其餘摺疊
 const visibleStageRows = computed(() => {
   if (showAllStages.value) return stageRows.value
-  const cut = Math.min(STAGES.length, stageInfo.value.unlocked + 2)
+  const cut = Math.min(stages.value.length, stageInfo.value.unlocked + 2)
   return stageRows.value.slice(0, cut)
 })
 const hiddenStageCount = computed(() => stageRows.value.length - visibleStageRows.value.length)
 
 function scriptName(script: string) {
+  if (script === 'both') return '平假名 + 片假名'
+  return script === 'hiragana' ? '平假名' : '片假名'
+}
+// 鼓面圓圈裡空間有限,用短標示
+function scriptShort(script: string) {
+  if (script === 'both') return '平・片'
   return script === 'hiragana' ? '平假名' : '片假名'
 }
 
-// === 手寫描紅 ===
-// 虛線田字格 + 淡色範字,用手指 / 筆描;不辨識、不記分,純練字形
-const traceActive = ref(false)
-const traceIndex = ref(0)
-const traceShowGuide = ref(true)
-const traceBoard = ref<{ clear: () => void; undo: () => void; hasInk: boolean } | null>(null)
+// === 手寫測驗(看羅馬字寫假名,隨機出題,每題自評)===
+const traceBoard = ref<{
+  clear: () => void
+  undo: () => void
+  hasInk: boolean
+  getStrokes: () => { x: number; y: number }[][]
+  playDemo: () => void
+  stopDemo: () => void
+} | null>(null)
+const writeQueue = ref<string[]>([])
+const writeTotal = ref(0)
+const writeCorrectIds = ref<string[]>([])
+const writeWrongIds = ref<string[]>([])
+const writeResults = ref<('ok' | 'ng')[]>([])
+// 寫完按「對答案」才辨識並把正確字形疊上來
+const writeRevealed = ref(false)
+const writeVerdict = ref<RecognizeResult | null>(null)
+// 使用者不同意辨識結果時的改判
+const writeOverride = ref<boolean | null>(null)
+const writeOk = computed(() => writeOverride.value ?? writeVerdict.value?.ok ?? false)
 
-// 範圍 = 目前關卡的字;全部通關後用最後一關
-const traceCards = computed<KanaEntry[]>(() => {
-  const stage = stageInfo.value.current ?? STAGES[STAGES.length - 1]
-  return stage.cardIds
+function verdictText(r: RecognizeResult | null): string {
+  if (!r) return ''
+  switch (r.reason) {
+    case 'ok': return '辨識正確'
+    case 'order': return '字形正確,但筆順和標準不同'
+    case 'strokes': return `筆畫數不對 — 這個字 ${r.expectedStrokes} 畫,你寫了 ${r.gotStrokes} 畫`
+    case 'confused': return `比較像「${r.confusedWith}」`
+    case 'empty': return '還沒寫'
+    default: return '認不出來'
+  }
+}
+const writeVerdictText = computed(() => verdictText(writeVerdict.value))
+const writeFinished = ref(false)
+
+const traceActive = computed(() => writeQueue.value.length > 0 || writeFinished.value)
+const traceCard = computed<KanaEntry | null>(
+  () => ALL_KANA.find((k) => k.id === writeQueue.value[0]) ?? null,
+)
+const writeAnswered = computed(() => writeCorrectIds.value.length + writeWrongIds.value.length)
+const writeWrongCards = computed(() =>
+  writeWrongIds.value
     .map((id) => ALL_KANA.find((k) => k.id === id))
-    .filter((k): k is KanaEntry => !!k)
-})
-const traceCard = computed<KanaEntry | null>(() => traceCards.value[traceIndex.value] ?? null)
+    .filter((k): k is KanaEntry => !!k),
+)
 
 function startTrace() {
   sfx('ka')
-  traceIndex.value = 0
-  traceShowGuide.value = true
-  traceActive.value = true
+  const list = stages.value
+  const stage = stageInfo.value.current ?? list[list.length - 1]
+  const ids = (stage?.cardIds ?? []).filter((id) => isUnlocked(id))
+  if (ids.length === 0) {
+    alert('目前沒有可測驗的字 — 請確認設定裡有勾選目前關卡的字母')
+    return
+  }
+  // 洗牌出題,每張只問一次
+  const queue = [...ids]
+  for (let i = queue.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[queue[i], queue[j]] = [queue[j], queue[i]]
+  }
+  writeQueue.value = queue
+  writeTotal.value = queue.length
+  writeCorrectIds.value = []
+  writeWrongIds.value = []
+  writeResults.value = []
+  writeRevealed.value = false
+  writeVerdict.value = null
+  writeOverride.value = null
+  writeFinished.value = false
+  combo.value = 0
+  comboBest.value = 0
+  sessionCorrect.value = 0
+  sessionWrong.value = 0
   sessionStarted.value = true
 }
 
 function finishTrace() {
-  traceActive.value = false
+  writeQueue.value = []
+  writeTotal.value = 0
+  writeCorrectIds.value = []
+  writeWrongIds.value = []
+  writeResults.value = []
+  writeRevealed.value = false
+  writeVerdict.value = null
+  writeOverride.value = null
+  writeFinished.value = false
   sessionStarted.value = false
 }
 
-function traceGo(delta: number) {
-  const n = traceCards.value.length
-  if (n === 0) return
-  sfx('ka')
-  traceIndex.value = (traceIndex.value + delta + n) % n
+function writeReveal() {
+  const card = traceCard.value
+  if (!card) return
+  const strokes = traceBoard.value?.getStrokes() ?? []
+  writeVerdict.value = recognizeKana(strokes, card.char, card.script)
+  writeOverride.value = null
+  writeRevealed.value = true
+  sfx(writeVerdict.value.ok ? 'don' : 'fail')
 }
 
-function traceJump(i: number) {
-  traceIndex.value = i
+// 成績只記在這場測驗裡,不寫進 SRS —— 手寫是另一種能力,
+// 混進打字的準確率會影響重點練習選卡
+function writeNext() {
+  const card = traceCard.value
+  if (!card) return
+  const ok = writeOk.value
+  if (ok) {
+    writeCorrectIds.value = [...writeCorrectIds.value, card.id]
+    sessionCorrect.value += 1
+    bumpCombo()
+  } else {
+    writeWrongIds.value = [...writeWrongIds.value, card.id]
+    sessionWrong.value += 1
+    resetCombo()
+  }
+  writeResults.value = [...writeResults.value, ok ? 'ok' : 'ng']
+  writeQueue.value = writeQueue.value.slice(1)
+  writeRevealed.value = false
+  writeVerdict.value = null
+  writeOverride.value = null
+  traceBoard.value?.stopDemo()
+  traceBoard.value?.clear()
+  if (writeQueue.value.length === 0) {
+    writeFinished.value = true
+    flushCloud()
+  }
 }
 
 function playTrace() {
@@ -517,10 +571,10 @@ watch(sessionStarted, (started) => {
   else startBgm('home')
 }, { immediate: true })
 
-const onDoneScreen = computed(() => focusFinished.value || testFinished.value || drillFinished.value)
+const onDoneScreen = computed(() => focusFinished.value || testFinished.value || writeFinished.value)
 
 // === 練習計時 ===
-// 在任何模式裡(重點 / 測驗 / 衝刺 / 描紅)每秒累加,結果畫面與分頁切到背景時暫停;
+// 在任何模式裡(重點練習 / 拼音測驗 / 手寫測驗)每秒累加,結果畫面與分頁切到背景時暫停;
 // 每 10 秒寫進今日統計一次,結束時把剩餘的補上
 const studying = computed(() => sessionStarted.value && !onDoneScreen.value)
 const sessionSeconds = ref(0)
@@ -588,27 +642,64 @@ watch(onDoneScreen, (done) => {
   }
 })
 
-function onFirstGesture() {
-  unlockAudio()
-  window.removeEventListener('pointerdown', onFirstGesture)
-  window.removeEventListener('keydown', onFirstGesture)
+// 瀏覽器只承認 touchend / click / pointerup / keydown 這類事件是「使用者互動」,
+// 觸控的 pointerdown 不算,所以要多監聽幾種;真的解鎖成功才拆掉監聽
+const GESTURE_EVENTS = ['pointerup', 'touchend', 'click', 'keydown', 'pointerdown'] as const
+async function onFirstGesture() {
+  const ok = await unlockAudio()
+  if (ok) {
+    for (const ev of GESTURE_EVENTS) window.removeEventListener(ev, onFirstGesture)
+  }
 }
 
 // === 手機軟鍵盤 ===
-// 鍵盤彈出時 visualViewport 變矮;切成緊湊版面塞進可見區,並把頁面釘住不被推上去
+// 鍵盤彈出 → 切成緊湊版面塞進可見區,並把頁面釘住不被推上去。
+// 不能用 vv.height / window.innerHeight 比較:viewport-fit 的 interactive-widget 會讓兩者
+// 一起縮小,比例永遠不變。改成記住「沒有鍵盤時的可視高度」當基準,再看有沒有明顯變矮。
 const kbOpen = ref(false)
+const inputFocused = ref(false)
+const KB_MIN_DROP = 100
+let baseViewportH = 0
+
 function onViewportChange() {
   const vv = window.visualViewport
   if (!vv) return
-  document.documentElement.style.setProperty('--vvh', `${Math.round(vv.height)}px`)
-  const open = sessionStarted.value && vv.height < window.innerHeight * 0.82
-  kbOpen.value = open
+  const h = Math.round(vv.height)
+  document.documentElement.style.setProperty('--vvh', `${h}px`)
+  // 輸入框沒有 focus 時的高度才拿來當基準
+  if (!inputFocused.value) baseViewportH = Math.max(baseViewportH, h)
+  const shrunk = baseViewportH > 0 && h < baseViewportH - KB_MIN_DROP
+  const open = sessionStarted.value && inputFocused.value && shrunk
+  if (open !== kbOpen.value) kbOpen.value = open
   if (open) {
-    // iOS 會把整頁往上捲來露出輸入框;版面已經縮到可見區內,捲回頂端即可
+    // iOS 仍可能把整頁往上捲來露出輸入框;版面已經縮進可視區,捲回頂端即可
     window.scrollTo(0, 0)
   }
 }
-watch(sessionStarted, () => nextTick(onViewportChange))
+
+function onFocusIn(e: FocusEvent) {
+  const el = e.target as HTMLElement | null
+  if (el?.classList.contains('answer-input')) {
+    inputFocused.value = true
+    // 鍵盤動畫需要時間,多量幾次
+    for (const d of [0, 60, 180, 350, 600]) setTimeout(onViewportChange, d)
+  }
+}
+function onFocusOut(e: FocusEvent) {
+  const el = e.target as HTMLElement | null
+  if (el?.classList.contains('answer-input')) {
+    inputFocused.value = false
+    for (const d of [0, 120, 350]) setTimeout(onViewportChange, d)
+  }
+}
+
+watch(sessionStarted, (started) => {
+  if (!started) {
+    inputFocused.value = false
+    kbOpen.value = false
+  }
+  nextTick(onViewportChange)
+})
 
 function onVisibility() {
   if (document.visibilityState === 'hidden') {
@@ -617,6 +708,7 @@ function onVisibility() {
   } else {
     if (!sessionStarted.value) startBgm()
     if (studying.value) startStudyTimer()
+    unlockAudio()
   }
 }
 
@@ -627,34 +719,6 @@ function checkAnswer(value: string) {
   const accepts = current.value.accepts
   const exact = accepts.includes(cleaned)
   const partialMatch = accepts.some((a) => a.startsWith(cleaned))
-
-  // === Bottom 6 衝刺模式 ===
-  if (drillActive.value && !drillFinished.value) {
-    if (exact) {
-      feedback.value = 'good'
-      sfx('don')
-      locked.value = true
-      review(current.value.id, true, firstTry.value)
-      sessionCorrect.value += 1
-      bumpCombo()
-      drillAnswer(current.value.id, true)
-      if (settings.value.autoPlaySound) speak(current.value.char)
-      setTimeout(() => next_drill_card_or_finish(), 400)
-      return
-    }
-    const longestD = Math.max(...accepts.map((a) => a.length))
-    if (!partialMatch || cleaned.length >= longestD) {
-      feedback.value = 'bad'
-      sfx('fail')
-      locked.value = true
-      review(current.value.id, false, false)
-      sessionWrong.value += 1
-      resetCombo()
-      drillAnswer(current.value.id, false)
-      setTimeout(() => next_drill_card_or_finish(), 600)
-    }
-    return
-  }
 
   // === 測驗模式 ===
   if (testActive.value && !testFinished.value) {
@@ -829,11 +893,14 @@ let speechKeepAlive: number | null = null
 onMounted(() => {
   loadVoice()
   initCloudSync()
-  window.addEventListener('pointerdown', onFirstGesture)
-  window.addEventListener('keydown', onFirstGesture)
+  for (const ev of GESTURE_EVENTS) window.addEventListener(ev, onFirstGesture, { passive: true })
   document.addEventListener('visibilitychange', onVisibility)
+  // 載入時先試著直接啟動:瀏覽器若放行(常來的網站、同分頁再次進入)就不用等點擊
+  unlockAudio()
   window.visualViewport?.addEventListener('resize', onViewportChange)
   window.visualViewport?.addEventListener('scroll', onViewportChange)
+  document.addEventListener('focusin', onFocusIn)
+  document.addEventListener('focusout', onFocusOut)
   onViewportChange()
   // 請求持久化儲存,降低 iOS/瀏覽器在空間吃緊時清掉 localStorage 的機率
   navigator.storage?.persist?.().catch(() => {})
@@ -854,6 +921,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibility)
   window.visualViewport?.removeEventListener('resize', onViewportChange)
   window.visualViewport?.removeEventListener('scroll', onViewportChange)
+  document.removeEventListener('focusin', onFocusIn)
+  document.removeEventListener('focusout', onFocusOut)
   stopStudyTimer()
   stopBgm()
 })
@@ -1326,6 +1395,36 @@ const examCountdown = computed(() => {
           </div>
         </div>
         <div class="setting-row">
+          <span class="setting-label">學習順序</span>
+          <div class="toggle-group">
+            <button
+              class="toggle"
+              :class="{ active: settings.stageMode === 'separate' }"
+              @click="updateSettings({ stageMode: 'separate' })"
+            >分開學</button>
+            <button
+              class="toggle"
+              :class="{ active: settings.stageMode === 'mixed' }"
+              @click="updateSettings({ stageMode: 'mixed' })"
+            >一起學</button>
+          </div>
+        </div>
+        <p class="setting-note muted">
+          分開學:平假名 10 關全通過後才開始片假名。一起學:每一關同時練同一行的平假名與片假名。
+          只勾選一種假名時沒有差別。
+        </p>
+        <div class="setting-row">
+          <span class="setting-label">練習方式</span>
+          <div class="toggle-group">
+            <button class="toggle" :class="{ active: settings.practiceMode === 'type' }" @click="updateSettings({ practiceMode: 'type' })">打拼音</button>
+            <button class="toggle" :class="{ active: settings.practiceMode === 'write' }" @click="updateSettings({ practiceMode: 'write' })">手寫</button>
+            <button class="toggle" :class="{ active: settings.practiceMode === 'mix' }" @click="updateSettings({ practiceMode: 'mix' })">混合</button>
+          </div>
+        </div>
+        <p class="setting-note muted">
+          重點練習每張卡要考什麼。混合會隨機交錯兩種,兩個方向都練得到。新字一律先用打拼音學字形。
+        </p>
+        <div class="setting-row">
           <span class="setting-label">每日新字</span>
           <input
             type="number"
@@ -1386,6 +1485,10 @@ const examCountdown = computed(() => {
         <div class="setting-row">
           <button class="danger" @click="confirmReset">清除所有進度</button>
         </div>
+        <p class="setting-note muted credit">
+          手寫辨識的筆順資料衍生自 KanjiVG(Copyright © 2009-2011 Ulrich Apel),
+          採 CC BY-SA 3.0 授權。
+        </p>
       </section>
 
       <section
@@ -1402,11 +1505,15 @@ const examCountdown = computed(() => {
       <section v-if="!sessionStarted" class="hero-taiko">
         <div class="drum-wrap">
           <div class="drum">
-            <div class="drum-face">
+            <div class="drum-face" :class="{ 'two-lines': (stageInfo.current?.charLines.length ?? 1) > 1 }">
               <template v-if="stageInfo.current">
-                <div class="drum-sub">第 {{ stageInfo.unlocked }} 關 · {{ scriptName(stageInfo.current.script) }}</div>
+                <div class="drum-sub">第 {{ stageInfo.unlocked }} 關 · {{ scriptShort(stageInfo.current.script) }}</div>
                 <div class="drum-label disp">{{ stageInfo.current.label }}</div>
-                <div class="drum-chars disp">{{ stageInfo.current.chars.join('') }}</div>
+                <div
+                  v-for="(line, li) in stageInfo.current.charLines"
+                  :key="li"
+                  class="drum-chars disp"
+                >{{ line.join('') }}</div>
               </template>
               <template v-else>
                 <div class="drum-sub">{{ stageInfo.total }} / {{ stageInfo.total }} 關</div>
@@ -1436,16 +1543,12 @@ const examCountdown = computed(() => {
         <div class="mode-grid">
           <button class="mode-pill mode-normal" :class="{ ready: stageReadyToTest }" @click="startTest">
             <span v-if="stageReadyToTest" class="mode-badge disp">解鎖！</span>
-            <span class="mode-jp disp">ふつう</span>
-            <span class="mode-zh">隨機測驗</span>
-          </button>
-          <button class="mode-pill mode-oni" @click="startDrill">
-            <span class="mode-jp disp">おに</span>
-            <span class="mode-zh">衝刺</span>
+            <span class="mode-jp disp">ローマ字</span>
+            <span class="mode-zh">拼音測驗</span>
           </button>
           <button class="mode-pill mode-trace" @click="startTrace">
-            <span class="mode-jp disp">れんしゅう</span>
-            <span class="mode-zh">描紅</span>
+            <span class="mode-jp disp">かきとり</span>
+            <span class="mode-zh">手寫測驗</span>
           </button>
         </div>
 
@@ -1463,9 +1566,11 @@ const examCountdown = computed(() => {
           >
             <div class="stage-tab disp">{{ row.stage.chars[0] }}</div>
             <div class="stage-body">
-              <div class="stage-row-chars disp">{{ row.stage.chars.join('') }}</div>
+              <div class="stage-row-chars disp" :class="{ two: row.stage.charLines.length > 1 }">
+                <span v-for="(line, li) in row.stage.charLines" :key="li">{{ line.join('') }}</span>
+              </div>
               <div v-if="row.status === 'passed'" class="stage-row-status">クリア！ 準確率 {{ row.accuracy }}%</div>
-              <div v-else-if="row.status === 'current' && row.introduced >= row.total" class="stage-row-status">已學 {{ row.total }} / {{ row.total }} · 測驗全對即解鎖下一關</div>
+              <div v-else-if="row.status === 'current' && row.introduced >= row.total" class="stage-row-status">已學 {{ row.total }} / {{ row.total }} · 拼音測驗全對即解鎖下一關</div>
               <div v-else-if="row.status === 'current'" class="stage-row-status">挑戰中 · 已學 {{ row.introduced }} / {{ row.total }}</div>
               <div v-else-if="row.stage.index === stageInfo.unlocked" class="stage-row-status">通過 {{ row.prevLabel }} 後解鎖</div>
               <div v-else class="stage-row-status">{{ scriptName(row.stage.script) }}</div>
@@ -1486,143 +1591,117 @@ const examCountdown = computed(() => {
         </div>
       </section>
 
-      <section v-else-if="traceActive" class="panel session trace-panel">
+      <section v-else-if="traceActive && !writeFinished" class="panel session trace-panel">
         <div class="session-bar">
-          <div class="quiz-title">手寫描紅</div>
-          <div class="session-meta">
-            <span class="muted">{{ traceIndex + 1 }} / {{ traceCards.length }}</span>
-          </div>
-          <button class="btn-ghost" @click="finishTrace">結束</button>
-        </div>
-        <div class="trace-chips">
-          <button
-            v-for="(k, i) in traceCards"
-            :key="k.id"
-            class="trace-chip"
-            :class="{ active: i === traceIndex }"
-            @click="traceJump(i)"
-          >{{ k.char }}</button>
-        </div>
-        <div v-if="traceCard" class="trace-wrap">
-          <div class="trace-head">
-            <span class="script-tag">{{ traceCard.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="trace-romaji">{{ traceCard.romaji }}</span>
-            <button v-if="ttsSupported" class="speak-btn" title="播放讀音" @click="playTrace">🔊</button>
-          </div>
-          <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="traceShowGuide" />
-          <div class="trace-tools">
-            <button
-              class="toggle"
-              :class="{ active: traceShowGuide }"
-              @click="traceShowGuide = !traceShowGuide"
-            >{{ traceShowGuide ? '範字:開' : '範字:關' }}</button>
-            <button class="btn-ghost small" @click="traceBoard?.undo()">上一筆</button>
-            <button class="btn-ghost small" @click="traceBoard?.clear()">清除</button>
-          </div>
-          <div class="trace-nav">
-            <button class="btn-ghost big" @click="traceGo(-1)">← 上一個</button>
-            <button class="primary big" @click="traceGo(1)">下一個 →</button>
-          </div>
-          <p class="muted trace-note">
-            先開著範字描幾次,關掉範字再憑記憶寫一次,對照虛線格的位置檢查字形。
-          </p>
-        </div>
-      </section>
-
-      <section v-else-if="drillActive && !drillFinished" class="panel session drill-panel">
-        <div class="session-bar">
-          <div class="quiz-title disp">衝刺</div>
+          <div class="quiz-title disp">手寫測驗</div>
           <div class="session-meta disp">
-            <span class="ok">✓{{ sessionCorrect }}</span>
-            <span class="ng">✗{{ sessionWrong }}</span>
-            <span class="timer" :class="{ low: drillSecondsLeft <= 60 }">{{ drillTimeText }}</span>
+            <span class="ok">✓{{ writeCorrectIds.length }}</span>
+            <span class="ng">✗{{ writeWrongIds.length }}</span>
+            <span>{{ writeAnswered }} / {{ writeTotal }}</span>
+            <span class="session-clock">{{ fmtClock(sessionSeconds) }}</span>
           </div>
-          <button class="btn-ghost arcade" @click="finishDrill">結束</button>
+          <button class="btn-ghost arcade" @click="finishTrace">結束</button>
         </div>
 
-        <!-- 量表 = 剩餘時間 -->
-        <div class="gauge" :class="{ low: drillSecondsLeft <= 60 }">
-          <span class="gauge-bar"><span class="gauge-fill time" :style="{ width: drillTimePct + '%' }"></span></span>
+        <div class="gauge">
+          <span
+            v-for="i in writeTotal"
+            :key="i"
+            class="gauge-cell"
+            :class="writeResults[i - 1] === 'ok' ? 'on good' : writeResults[i - 1] === 'ng' ? 'on bad' : ''"
+          ></span>
         </div>
 
-        <div v-if="current" class="card focus-card" :data-state="feedback">
+        <div v-if="traceCard" class="trace-wrap">
           <div class="combo-row">
             <transition name="pop">
               <span v-if="combo >= 2" :key="combo" class="combo-pill disp">{{ combo }} コンボ</span>
             </transition>
           </div>
-          <div class="kana-face-wrap">
-            <div class="kana-face">
-              <div class="kana">{{ current.char }}</div>
-            </div>
-            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playCurrent">
+          <div class="trace-head">
+            <span class="chip-tag">{{ traceCard.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="trace-romaji disp">{{ traceCard.romaji }}</span>
+            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playTrace">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
             </button>
           </div>
-          <div class="tag-row">
-            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="chip-tag chip-oni disp">おに</span>
+          <p v-if="!writeRevealed" class="trace-prompt">寫出這個音的假名</p>
+          <div v-else class="verdict" :class="writeOk ? 'good' : 'bad'">
+            <span class="verdict-mark disp">{{ writeOk ? '✓' : '✗' }}</span>
+            <span>{{ writeOverride === null ? writeVerdictText : (writeOk ? '已改判為寫對' : '已改判為沒寫對') }}</span>
           </div>
-          <input
-            ref="inputEl"
-            v-model="input"
-            class="answer-input"
-            :class="{ good: feedback === 'good', bad: feedback === 'bad' }"
-            autocomplete="off"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            placeholder="輸入羅馬字"
-            @keydown.enter.prevent="checkAnswer(input)"
-          />
-          <div class="hint-row">
-            <button class="btn-ghost arcade small" @click="skipDrillCard">我不會</button>
-            <span class="quiz-hint muted">最弱 6 張洗牌循環到時間到</span>
+
+          <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="writeRevealed" />
+
+          <div class="trace-tools">
+            <button class="btn-ghost arcade small" @click="traceBoard?.undo()">上一筆</button>
+            <button class="btn-ghost arcade small" @click="traceBoard?.clear()">清除</button>
+            <button
+              v-if="writeRevealed"
+              class="btn-ghost arcade small"
+              @click="traceBoard?.playDemo()"
+            >看筆順</button>
           </div>
+
+          <div v-if="!writeRevealed" class="trace-nav">
+            <button class="primary big disp" @click="writeReveal">對答案</button>
+          </div>
+          <template v-else>
+            <div class="trace-nav">
+              <button class="primary big disp" @click="writeNext">
+                {{ writeQueue.length > 1 ? '下一題 →' : '看結果 →' }}
+              </button>
+            </div>
+            <div class="trace-tools">
+              <button class="btn-ghost arcade small" @click="writeOverride = !writeOk">
+                {{ writeOk ? '改判為沒寫對' : '改判為寫對了' }}
+              </button>
+            </div>
+          </template>
+
+          <p class="muted trace-note">
+            憑記憶寫,按「對答案」自動比對筆跡並疊上正確字形。判錯了可以自己改判。
+            成績只算這場,不影響練習與解鎖。
+          </p>
         </div>
       </section>
 
-      <section v-else-if="drillFinished" class="panel session drill-done-panel celebrate">
+      <section v-else-if="writeFinished" class="panel session trace-done-panel celebrate">
         <div class="sunburst"></div>
         <div class="done-banner">
           <div class="done-title disp">終了！</div>
           <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
-          <div class="done-sub">Bottom 6 衝刺 · 10 分鐘</div>
+          <div class="done-sub">手寫測驗 · {{ writeTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
         </div>
         <div class="done-stats">
           <div class="done-stat good">
-            <span class="done-num disp">{{ sessionCorrect }}</span>
-            <span class="done-label">答對</span>
+            <span class="done-num disp">{{ writeCorrectIds.length }}</span>
+            <span class="done-label">寫對</span>
           </div>
           <div class="done-stat bad">
-            <span class="done-num disp">{{ sessionWrong }}</span>
-            <span class="done-label">答錯</span>
+            <span class="done-num disp">{{ writeWrongIds.length }}</span>
+            <span class="done-label">沒寫對</span>
           </div>
           <div class="done-stat combo">
             <span class="done-num disp">{{ comboBest }}</span>
             <span class="done-label">最高コンボ</span>
           </div>
         </div>
-        <div class="drill-summary-list">
-          <div
-            v-for="k in drillPoolCards"
-            :key="k.id"
-            class="drill-summary-row"
-          >
-            <span class="drill-summary-char">{{ k.char }}</span>
-            <span class="drill-summary-romaji">{{ k.romaji }}</span>
-            <span class="drill-summary-stats">
-              <span class="ok">✓ {{ drillStats[k.id]?.correct ?? 0 }}</span>
-              <span class="ng">✗ {{ drillStats[k.id]?.wrong ?? 0 }}</span>
+        <div v-if="writeWrongCards.length > 0" class="quiz-failed-list">
+          <div class="quiz-failed-label muted">要再練的字 ({{ writeWrongCards.length }})</div>
+          <div class="quiz-failed-chips">
+            <span v-for="k in writeWrongCards" :key="k.id" class="quiz-failed-chip">
+              {{ k.char }}
+              <span class="quiz-failed-romaji">{{ k.romaji }}</span>
             </span>
           </div>
         </div>
-        <button class="primary big disp" @click="finishDrill">回到首頁</button>
+        <button class="primary big disp" @click="finishTrace">回到首頁</button>
       </section>
 
       <section v-else-if="testActive && !testFinished" class="panel session test-panel">
         <div class="session-bar">
-          <div class="quiz-title disp">隨機測驗</div>
+          <div class="quiz-title disp">拼音測驗</div>
           <div class="session-meta disp">
             <span class="ok">✓{{ testCorrectIds.length }}</span>
             <span class="ng">✗{{ testWrongIds.length }}</span>
@@ -1661,7 +1740,7 @@ const examCountdown = computed(() => {
           </div>
           <div class="tag-row">
             <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="chip-tag chip-test disp">測驗</span>
+            <span class="chip-tag chip-test disp">拼音</span>
           </div>
           <input
             ref="inputEl"
@@ -1687,7 +1766,7 @@ const examCountdown = computed(() => {
         <div class="done-banner">
           <div class="done-title disp">{{ lastStageResult?.passed ? '合格！' : '終了' }}</div>
           <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
-          <div class="done-sub">隨機測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
+          <div class="done-sub">拼音測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
         </div>
         <div v-if="lastStageResult" class="stage-result" :class="lastStageResult.passed ? 'pass' : 'fail'">
           <template v-if="lastStageResult.passed">
@@ -1759,7 +1838,15 @@ const examCountdown = computed(() => {
             </transition>
           </div>
 
-          <div class="kana-face-wrap">
+          <!-- 手寫回合不能露出字形,用羅馬字當題目,版面也比鼓面精簡 -->
+          <div v-if="focusRound === 'write'" class="trace-head">
+            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="trace-romaji disp">{{ current.romaji }}</span>
+            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playCurrent">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
+            </button>
+          </div>
+          <div v-else class="kana-face-wrap">
             <div class="kana-face" :class="{ 'with-reading': isNewCard }">
               <div class="kana">{{ current.char }}</div>
               <div v-if="isNewCard" class="kana-reading disp">{{ current.romaji }}</div>
@@ -1775,9 +1862,11 @@ const examCountdown = computed(() => {
           </div>
 
           <div class="tag-row">
-            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <!-- 手寫回合的題目列已經標了假名種類,這裡不重複 -->
+            <span v-if="focusRound !== 'write'" class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
             <span v-if="isNewCard" class="chip-tag chip-new disp">新字</span>
-            <span v-else class="chip-tag chip-focus disp">重點</span>
+            <span v-else-if="focusRound === 'write'" class="chip-tag chip-write disp">手寫</span>
+            <span v-else class="chip-tag chip-focus disp">拼音</span>
             <span class="focus-progress-dots" :title="`已對 ${focusProgressFor(current.id).done}/${focusProgressFor(current.id).needed} 次`">
               <span
                 v-for="i in focusProgressFor(current.id).needed"
@@ -1788,6 +1877,51 @@ const examCountdown = computed(() => {
             </span>
           </div>
 
+          <template v-if="focusRound === 'write'">
+            <div v-if="focusRevealed" class="verdict" :class="focusOk ? 'good' : 'bad'">
+              <span class="verdict-mark disp">{{ focusOk ? '✓' : '✗' }}</span>
+              <span>{{ focusOverride === null ? focusVerdictText : (focusOk ? '已改判為寫對' : '已改判為沒寫對') }}</span>
+            </div>
+            <p v-else-if="focusHinted" class="trace-prompt">照著筆順描一次,這題不記分</p>
+            <p v-else class="trace-prompt">寫出這個音的假名</p>
+
+            <div class="focus-board">
+              <TraceBoard ref="focusBoard" :char="current.char" :show-guide="focusRevealed || focusHinted" />
+            </div>
+
+            <div class="trace-tools">
+              <button class="btn-ghost arcade small" @click="focusBoard?.undo()">上一筆</button>
+              <button class="btn-ghost arcade small" @click="focusBoard?.clear()">清除</button>
+              <button
+                v-if="focusHinted || focusRevealed"
+                class="btn-ghost arcade small"
+                @click="focusBoard?.playDemo()"
+              >再看一次筆順</button>
+              <button
+                v-if="focusRevealed"
+                class="btn-ghost arcade small"
+                @click="focusOverride = !focusOk"
+              >{{ focusOk ? '改判為沒寫對' : '改判為寫對了' }}</button>
+            </div>
+
+            <div class="trace-nav">
+              <template v-if="focusRevealed">
+                <button class="primary big disp" @click="focusWriteNext">下一題 →</button>
+              </template>
+              <template v-else-if="focusHinted">
+                <button class="primary big disp" @click="focusHintedNext">下一題 →</button>
+              </template>
+              <template v-else>
+                <button class="btn-ghost arcade big disp" @click="focusShowStrokes">不會(看寫法)</button>
+                <button class="primary big disp" @click="focusWriteReveal">對答案</button>
+              </template>
+            </div>
+            <p v-if="focusHinted && !focusRevealed" class="hint-row">
+              <span class="answer-note muted">看了不記分,需再寫對一次才出隊</span>
+            </p>
+          </template>
+
+          <template v-else>
           <input
             ref="inputEl"
             v-model="input"
@@ -1815,6 +1949,7 @@ const examCountdown = computed(() => {
               <span class="answer-note muted">看了不記分,需再答對一次才出隊</span>
             </span>
           </div>
+          </template>
         </div>
       </section>
 
@@ -1843,15 +1978,13 @@ const examCountdown = computed(() => {
           </div>
         </div>
         <p v-if="stageReadyToTest && stageInfo.current" class="muted focus-done-note">
-          {{ stageInfo.current.label }} 的字都學過了。去「測驗」把這 {{ stageInfo.current.chars.length }} 個字一次全對,就能解鎖下一關。
+          {{ stageInfo.current.label }} 的字都學過了。隔一段時間再來拼音測驗,一次全對就解鎖下一關 ——
+          剛練完馬上測驗考的是短期記憶,過了也不代表真的記住。
         </p>
         <p v-else class="muted focus-done-note">
           這場練過的字準確率會被推高;下次再開會自動挑當下最弱的 6 張 + 目前關卡的新字。
         </p>
-        <div class="done-actions">
-          <button v-if="stageReadyToTest" class="primary big disp" @click="goTestFromFocus">前往測驗 → 解鎖</button>
-          <button class="btn-ghost big disp" :class="{ primary: !stageReadyToTest }" @click="finishFocus">回到首頁</button>
-        </div>
+        <button class="primary big disp" @click="finishFocus">回到首頁</button>
       </section>
 
     </main>
@@ -1872,12 +2005,14 @@ const examCountdown = computed(() => {
 }
 
 /* ===== 軟鍵盤開啟時的緊湊版面 ===== */
+/* 鼓面大小跟著可視高度走,鍵盤把畫面壓到很矮時也塞得下 */
 .page.in-session.kb-open {
+  --drum: min(168px, calc(var(--vvh, 500px) * 0.36));
   position: fixed;
   inset: 0;
   height: var(--vvh, 100%);
   overflow-y: auto;
-  padding: 8px 14px 12px;
+  padding: 6px 14px 10px;
 }
 .page.in-session.kb-open .topbar { display: none; }
 .page.in-session.kb-open .panel.session {
@@ -1887,24 +2022,27 @@ const examCountdown = computed(() => {
   box-shadow: none;
   background: transparent;
 }
-.page.in-session.kb-open .session-bar { margin-bottom: 10px; }
+.page.in-session.kb-open .session-bar { margin-bottom: 8px; }
+.page.in-session.kb-open .quiz-title.disp { font-size: 16px; }
+.page.in-session.kb-open .btn-ghost.arcade { padding: 6px 12px; font-size: 13px; }
 .page.in-session.kb-open .gauge { margin: 0 0 4px; padding: 3px; }
 .page.in-session.kb-open .gauge-cell,
 .page.in-session.kb-open .gauge-bar { height: 8px; }
 .page.in-session.kb-open .combo-row { height: 24px; }
 .page.in-session.kb-open .card { padding: 4px 0; }
 .page.in-session.kb-open .panel.session::before { display: none; }
-.page.in-session.kb-open .kana-face-wrap { width: 150px; height: 150px; margin: 0 auto 8px; }
+.page.in-session.kb-open .kana-face-wrap {
+  width: var(--drum);
+  height: var(--drum);
+  margin: 0 auto 6px;
+}
 .page.in-session.kb-open .kana-face-wrap::before { box-shadow: 0 4px 0 var(--ink); }
-.page.in-session.kb-open .kana-face { inset: 12px; }
-.page.in-session.kb-open .drill-panel .quiz-title,
-.page.in-session.kb-open .drill-panel .session-meta.disp,
-.page.in-session.kb-open .drill-panel .session-meta.disp .timer { color: var(--ink); }
-.page.in-session.kb-open .kana-face .kana { font-size: 84px; }
-.page.in-session.kb-open .kana-face.with-reading .kana { font-size: 70px; }
-.page.in-session.kb-open .kana-reading { font-size: 18px; }
+.page.in-session.kb-open .kana-face { inset: calc(var(--drum) * 0.09); }
+.page.in-session.kb-open .kana-face .kana { font-size: calc(var(--drum) * 0.60); }
+.page.in-session.kb-open .kana-face.with-reading .kana { font-size: calc(var(--drum) * 0.50); }
+.page.in-session.kb-open .kana-reading { font-size: calc(var(--drum) * 0.14); margin-top: 0; }
 .page.in-session.kb-open .new-card-note { display: none; }
-.page.in-session.kb-open .kana-face-wrap .speak-btn { width: 40px; height: 40px; right: -6px; bottom: -2px; }
+.page.in-session.kb-open .kana-face-wrap .speak-btn { width: 38px; height: 38px; right: -8px; bottom: -2px; }
 .page.in-session.kb-open .kana { font-size: 96px; margin: 0; }
 .page.in-session.kb-open .tag-row { margin-bottom: 8px; }
 .page.in-session.kb-open .learn-hint { padding: 6px 12px; margin: 0 auto 8px; gap: 0; box-shadow: none; }
@@ -2141,8 +2279,6 @@ const examCountdown = computed(() => {
 .session-meta.disp { font-size: 13px; gap: 8px; letter-spacing: 0.04em; color: var(--muted); white-space: nowrap; }
 .session-bar { gap: 8px; }
 .session-bar .btn-ghost.arcade { white-space: nowrap; flex-shrink: 0; }
-.drill-panel .session-meta.disp .ok,
-.drill-panel .session-meta.disp .ng { color: var(--panel); }
 .session-clock { font-variant-numeric: tabular-nums; opacity: 0.8; }
 
 /* 描邊版按鈕(結束 / 看答案 / 喇叭) */
@@ -2195,7 +2331,17 @@ const examCountdown = computed(() => {
 .gauge-fill.time { background: var(--accent); }
 .gauge.low .gauge-fill.time { background: var(--bad); }
 .chip-tag.chip-test { background: var(--star); }
-.chip-tag.chip-oni { background: var(--bad); color: var(--panel); }
+.chip-tag.chip-write { background: var(--good); color: var(--panel); }
+/* 手寫格跟著可視高度縮,矮螢幕上主要按鈕才不會被推到畫面外。
+   練習的手寫回合比測驗多一列標籤和コンボ,格子再小一階 */
+.focus-board {
+  width: min(300px, calc(var(--vvh, 100vh) * 0.27));
+  margin: 0 auto 8px;
+}
+.focus-card:has(.focus-board) .combo-row { height: 26px; }
+.focus-card:has(.focus-board) .tag-row { margin-bottom: 8px; }
+.focus-panel .trace-prompt { margin: 0; }
+.focus-panel .trace-head { margin-bottom: 4px; }
 .session-meta.disp .timer { font-size: 16px; color: var(--ink); }
 .session-meta.disp .ok { color: var(--good); }
 .session-meta.disp .ng { color: var(--bad); }
@@ -2223,7 +2369,7 @@ const examCountdown = computed(() => {
   to { transform: scale(1); opacity: 1; }
 }
 
-/* ===== 練習 / 測驗 / 衝刺 的彩色填充 ===== */
+/* ===== 練習 / 測驗 畫面的彩色填充 ===== */
 .panel.session {
   position: relative;
   overflow: hidden;
@@ -2232,7 +2378,6 @@ const examCountdown = computed(() => {
 }
 .panel.session.focus-panel { --band: var(--accent); --ring: var(--accent); }
 .panel.session.test-panel { --band: var(--star); --ring: var(--star); }
-.panel.session.drill-panel { --band: var(--bad); --ring: var(--bad); }
 .panel.session.trace-panel { --band: var(--good); --ring: var(--good); }
 /* 頂部彩色市松格帶,session-bar 與量表坐在上面 */
 .panel.session::before {
@@ -2254,10 +2399,9 @@ const examCountdown = computed(() => {
 }
 .panel.session > * { position: relative; }
 .panel.session .gauge { background: var(--panel); }
-.drill-panel .session-meta.disp .timer { color: var(--panel); }
-.drill-panel .quiz-title,
-.drill-panel .session-meta.disp { color: var(--panel); }
-
+.trace-panel .session-meta.disp,
+.trace-panel .session-meta.disp .ok,
+.trace-panel .session-meta.disp .ng { color: var(--ink); }
 /* 鼓面卡片:外圈彩色鼓身 + 內圈白色鼓面 */
 .kana-face-wrap {
   position: relative;
@@ -2298,11 +2442,11 @@ const examCountdown = computed(() => {
 }
 .new-card-note { font-size: 12px; }
 .focus-card[data-state='good'] .kana-face {
-  background: rgba(var(--good-rgb), 0.18);
+  background: linear-gradient(rgba(var(--good-rgb), 0.22), rgba(var(--good-rgb), 0.22)), var(--panel);
   transform: scale(1.04);
 }
 .focus-card[data-state='bad'] .kana-face {
-  background: rgba(var(--bad-rgb), 0.16);
+  background: linear-gradient(rgba(var(--bad-rgb), 0.2), rgba(var(--bad-rgb), 0.2)), var(--panel);
   animation: shake 0.3s;
 }
 .kana-face-wrap .speak-btn {
@@ -2426,8 +2570,6 @@ const examCountdown = computed(() => {
   background: var(--panel);
 }
 .done-num { font-size: 28px; line-height: 1; }
-.done-actions { display: flex; flex-direction: column; gap: 10px; }
-.done-actions .btn-ghost.big { width: 100%; }
 .mode-pill { position: relative; }
 .mode-pill.ready { animation: ready-bounce 1.6s ease-in-out infinite; }
 .mode-badge {
@@ -2494,37 +2636,6 @@ const examCountdown = computed(() => {
 .quiz-correct-chip {
   border-color: rgba(var(--good-rgb), 0.55) !important;
   background: rgba(var(--good-rgb), 0.10) !important;
-}
-.drill-summary-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 16px 0 24px;
-}
-.drill-summary-row {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 10px 14px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-.drill-summary-char {
-  font-size: 22px;
-  font-weight: 600;
-  min-width: 1.8em;
-}
-.drill-summary-romaji {
-  font-size: 12px;
-  color: var(--muted);
-  flex: 1;
-}
-.drill-summary-stats {
-  display: flex;
-  gap: 10px;
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
 }
 .session-meta .timer {
   font-size: 16px;
@@ -3038,7 +3149,11 @@ const examCountdown = computed(() => {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+.trace-wrap .trace-board {
+  width: min(320px, calc(var(--vvh, 100vh) * 0.30));
+  align-self: center;
 }
 .trace-head {
   display: flex;
@@ -3047,11 +3162,49 @@ const examCountdown = computed(() => {
   gap: 10px;
 }
 .trace-romaji {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--accent-text);
-  letter-spacing: 0.08em;
+  font-size: 40px;
+  color: var(--ink);
+  letter-spacing: 0.1em;
+  line-height: 1;
 }
+.trace-prompt {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin: -4px 0 0;
+}
+.verdict {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: -2px auto 0;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 3px solid var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+.verdict.good { background: rgba(var(--good-rgb), 0.25); }
+.verdict.bad { background: rgba(var(--bad-rgb), 0.2); }
+.verdict-mark { font-size: 18px; }
+.judge-btn {
+  flex: 1;
+  padding: 14px 0;
+  font-size: 16px;
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  color: var(--ink);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.judge-btn:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+.judge-btn.right { background: var(--good); color: var(--panel); }
+.judge-btn.wrong { background: var(--panel); }
+.panel.session.trace-done-panel { --band: var(--good); }
+.trace-done-panel::before { display: none; }
 .trace-tools {
   display: flex;
   justify-content: center;
@@ -3063,6 +3216,7 @@ const examCountdown = computed(() => {
   gap: 10px;
 }
 .trace-nav > button { flex: 1; }
+.btn-ghost.arcade.big { padding: 14px 10px; font-size: 15px; border-radius: 14px; box-shadow: 0 4px 0 var(--ink); }
 .trace-note { font-size: 12px; line-height: 1.6; text-align: center; margin: 0; }
 .stage-result.fail {
   color: var(--bad);
@@ -3130,12 +3284,24 @@ const examCountdown = computed(() => {
   line-height: 1.05;
   color: var(--ink);
 }
+.stage-row-chars { display: flex; gap: 12px; flex-wrap: wrap; }
+.stage-row-chars.two { font-size: 14px; letter-spacing: 0.12em; }
+.credit { margin-top: 14px; opacity: 0.75; }
+.setting-note {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: -6px 0 14px;
+}
 .drum-chars {
   font-size: 16px;
   letter-spacing: 0.3em;
   padding-left: 0.3em;
   color: var(--bad);
+  line-height: 1.35;
 }
+/* 一起學:圓圈裡要放兩行假名,字級縮一階 */
+.drum-face.two-lines .drum-label { font-size: 42px; }
+.drum-face.two-lines .drum-chars { font-size: 14px; letter-spacing: 0.2em; padding-left: 0.2em; }
 .drum-badges {
   display: flex;
   gap: 8px;
@@ -3194,7 +3360,7 @@ const examCountdown = computed(() => {
 }
 .mode-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 .mode-pill {
@@ -3214,10 +3380,9 @@ const examCountdown = computed(() => {
   transform: translateY(3px);
   box-shadow: 0 0 0 var(--ink);
 }
-.mode-jp { font-size: 10px; letter-spacing: 0.08em; }
-.mode-zh { font-size: 12px; font-weight: 700; }
+.mode-jp { font-size: 11px; letter-spacing: 0.08em; }
+.mode-zh { font-size: 14px; font-weight: 700; }
 .mode-normal { background: var(--accent); }
-.mode-oni { background: var(--bad); color: var(--panel); }
 .stage-list {
   display: flex;
   flex-direction: column;

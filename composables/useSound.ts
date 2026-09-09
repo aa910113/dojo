@@ -20,61 +20,74 @@ export interface Track {
   don: number[]
   ka: number[]
   melody: (number | null)[]
-  melodyStep: number       // 每幾個 step 一個音(2 = 八分音符)
-  voice: 'pluck' | 'flute'
+  melodyStep: number       // 每幾個 step 一個音(1 = 十六分,2 = 八分)
+  voice: 'pluck' | 'flute' | 'bell'
   noteDur: number
   bass: number[]           // 每拍(4 step)一個低音
+  clap?: number[]          // 手拍子,製造推進感
   loops: number            // 播幾輪後換曲
 }
 
 const TRACKS: Track[] = [
   {
-    // 陽音階,標準祭囃子
-    name: '祭囃子', bpm: 132, loopSteps: 32,
-    don: [0, 6, 8, 14, 16, 22, 24, 28, 30], ka: [4, 12, 20, 26, 27],
-    melody: N('D5 E5 G5 A5 G5 E5 D5 - B4 D5 E5 G5 E5 D5 B4 -'), melodyStep: 2,
-    voice: 'pluck', noteDur: 0.32,
-    bass: [n('D3'), n('D3'), n('A2'), n('D3'), n('D3'), n('D3'), n('A2'), n('B2')], loops: 6,
+    // 全套裡最有精神的一首,但鼓點留白,旋律當主角
+    name: '祭囃子', bpm: 116, loopSteps: 32,
+    don: [0, 6, 8, 16, 22, 24],
+    ka: [12, 28, 29],
+    melody: N('D5 E5 G5 A5 G5 - E5 - D5 E5 G5 B5 A5 - G5 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.36,
+    bass: [n('D3'), n('D3'), n('A2'), n('A2'), n('G2'), n('G2'), n('A2'), n('D3')],
+    loops: 7,
   },
   {
-    // 慢一點的盆踊り,G 陽音階,鼓有留白
-    name: '盆踊り', bpm: 108, loopSteps: 32,
-    don: [0, 8, 12, 16, 24, 28], ka: [6, 14, 22, 30, 31],
-    melody: N('G4 A4 C5 D5 C5 A4 G4 - E4 G4 A4 C5 A4 G4 E4 -'), melodyStep: 2,
-    voice: 'pluck', noteDur: 0.42,
-    bass: [n('G2'), n('G2'), n('D3'), n('G2'), n('C3'), n('C3'), n('D3'), n('G2')], loops: 5,
+    // 花笠:舞步感,輕快但不趕
+    name: '花笠', bpm: 108, loopSteps: 32,
+    don: [0, 8, 16, 24],
+    ka: [3, 11, 19, 27],
+    melody: N('A4 B4 D5 E5 D5 B4 A4 - B4 D5 E5 F#5 E5 D5 B4 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.34,
+    bass: [n('A2'), n('A2'), n('E3'), n('E3'), n('D3'), n('D3'), n('E3'), n('A2')],
+    loops: 7,
   },
   {
-    // 快速花火,ka 很多,旋律往上衝
-    name: '花火', bpm: 148, loopSteps: 32,
-    don: [0, 4, 8, 12, 16, 20, 24, 26, 28], ka: [2, 6, 10, 14, 18, 22, 30, 31],
-    melody: N('A4 B4 D5 E5 A5 E5 D5 B4 A4 B4 D5 E5 F#5 E5 D5 B4'), melodyStep: 2,
-    voice: 'pluck', noteDur: 0.26,
-    bass: [n('A2'), n('A2'), n('E3'), n('A2'), n('D3'), n('D3'), n('E3'), n('A2')], loops: 6,
+    // 朝日:鈴聲,旋律一路爬升,鼓只在每小節落一下
+    name: '朝日', bpm: 100, loopSteps: 32,
+    don: [0, 16],
+    ka: [8, 24, 26],
+    melody: N('G4 A4 B4 D5 E5 - D5 - B4 D5 E5 G5 A5 - G5 -'), melodyStep: 2,
+    voice: 'bell', noteDur: 0.55,
+    bass: [n('G2'), n('G2'), n('D3'), n('D3'), n('E3'), n('E3'), n('C3'), n('D3')],
+    loops: 6,
   },
   {
-    // 夜櫻,都節音階 (E F A B C),慢,笛聲
-    name: '夜桜', bpm: 92, loopSteps: 64,
-    don: [0, 16, 24, 32, 48, 56], ka: [12, 28, 44, 60],
-    melody: N('E5 - F5 - A5 - - - B5 - A5 - F5 - E5 - C5 - - - B4 - A4 - - - - - E5 - - -'), melodyStep: 2,
-    voice: 'flute', noteDur: 0.5,
-    bass: [n('E3'), n('E3'), n('E3'), n('E3'), n('A2'), n('A2'), n('B2'), n('B2'), n('E3'), n('E3'), n('E3'), n('E3'), n('A2'), n('A2'), n('B2'), n('E3')], loops: 4,
+    // 風車:八分音符的旋轉音型,平穩
+    name: '風車', bpm: 112, loopSteps: 32,
+    don: [0, 8, 16, 24],
+    ka: [4, 12, 20, 28],
+    melody: N('E5 G5 A5 G5 E5 D5 E5 - G5 A5 B5 A5 G5 E5 D5 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.3,
+    bass: [n('E3'), n('E3'), n('A2'), n('A2'), n('D3'), n('D3'), n('A2'), n('E3')],
+    loops: 7,
   },
   {
-    // 神輿,推進感,重複短句像喊聲
-    name: '神輿', bpm: 140, loopSteps: 32,
-    don: [0, 2, 4, 8, 10, 12, 16, 18, 20, 24, 26, 28], ka: [6, 14, 22, 30],
-    melody: N('D5 D5 A4 - D5 D5 A4 - G5 G5 E5 - D5 - A4 -'), melodyStep: 2,
-    voice: 'pluck', noteDur: 0.22,
-    bass: [n('D3'), n('D3'), n('D3'), n('D3'), n('G2'), n('G2'), n('A2'), n('A2')], loops: 6,
+    // 豊年:切分但輕,像踏著走
+    name: '豊年', bpm: 104, loopSteps: 32,
+    don: [0, 11, 16, 27],
+    ka: [6, 22, 30],
+    melody: N('C5 D5 E5 G5 A5 - G5 E5 D5 - E5 G5 A5 - G5 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.4,
+    bass: [n('C3'), n('C3'), n('G2'), n('G2'), n('A2'), n('A2'), n('F2'), n('G2')],
+    loops: 7,
   },
   {
-    // 竹林,笛聲長音,鼓很少,偏環境
-    name: '竹林', bpm: 116, loopSteps: 64,
-    don: [0, 32], ka: [8, 24, 40, 56],
-    melody: N('A4 - - - B4 - D5 - - - E5 - - - D5 - B4 - - - A4 - - - - - - - G4 - A4 -'), melodyStep: 2,
-    voice: 'flute', noteDur: 0.6,
-    bass: [n('A2'), n('A2'), n('A2'), n('A2'), n('A2'), n('A2'), n('G2'), n('G2'), n('A2'), n('A2'), n('A2'), n('A2'), n('D3'), n('D3'), n('G2'), n('A2')], loops: 4,
+    // 小春日:最安靜的一首,篠笛長音
+    name: '小春日', bpm: 96, loopSteps: 32,
+    don: [0, 20],
+    ka: [10, 26],
+    melody: N('C5 D5 E5 - G5 - E5 D5 C5 - A4 C5 D5 - E5 -'), melodyStep: 2,
+    voice: 'flute', noteDur: 0.7,
+    bass: [n('C3'), n('C3'), n('F2'), n('F2'), n('G2'), n('G2'), n('A2'), n('G2')],
+    loops: 6,
   },
 ]
 
@@ -84,7 +97,8 @@ const RESULT_TRACK: Track = {
   don: [0, 8, 16, 24, 28], ka: [4, 6, 12, 20, 22, 30],
   melody: N('G5 A5 B5 - D6 - B5 A5 G5 - E5 G5 A5 - - - B5 A5 G5 E5 D5 - E5 G5 A5 - - - G5 - - -'), melodyStep: 1,
   voice: 'pluck', noteDur: 0.3,
-  bass: [n('G2'), n('G2'), n('D3'), n('D3'), n('E3'), n('E3'), n('D3'), n('G2')], loops: 1_000_000,
+  bass: [n('G2'), n('G2'), n('D3'), n('D3'), n('E3'), n('E3'), n('D3'), n('G2')],
+  clap: [8, 24], loops: 1_000_000,
 }
 
 // 過關音效用的音
@@ -102,6 +116,9 @@ function ensure(): AudioContext | null {
   const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AC) return null
   ctx = new AC()
+  ctx.addEventListener('statechange', () => {
+    if (ctx?.state === 'running') stateBecameRunning?.()
+  })
   master = ctx.createGain()
   master.gain.value = 0.9
   master.connect(ctx.destination)
@@ -230,6 +247,45 @@ function playFlute(at: number, freq: number, bus: GainNode, dur = 0.5, vel = 1) 
   o.stop(at + dur + 0.05); lfo.stop(at + dur + 0.05); nz.stop(at + dur + 0.05)
 }
 
+// 手拍子:兩發極短的帶通噪音,像手掌拍在一起
+function playClap(at: number, bus: GainNode, vel = 1) {
+  const c = ctx!
+  for (const [dt, amp] of [[0, 0.5], [0.012, 1]] as const) {
+    const nz = c.createBufferSource()
+    nz.buffer = noiseBuf
+    const bp = c.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = 1600
+    bp.Q.value = 1.6
+    const g = c.createGain()
+    g.gain.setValueAtTime(0.42 * amp * vel, at + dt)
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dt + 0.09)
+    nz.connect(bp).connect(g).connect(bus)
+    nz.start(at + dt)
+    nz.stop(at + dt + 0.12)
+  }
+}
+
+// 鈴:基音加兩個泛音,起音快、殘響長,聽起來明亮
+function playBell(at: number, freq: number, bus: GainNode, dur = 0.4, vel = 1) {
+  const c = ctx!
+  const g = c.createGain()
+  g.gain.setValueAtTime(0.0001, at)
+  g.gain.exponentialRampToValueAtTime(0.4 * vel, at + 0.006)
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur)
+  g.connect(bus)
+  for (const [mult, amp] of [[1, 1], [2.01, 0.4], [3.02, 0.18]] as const) {
+    const o = c.createOscillator()
+    o.type = 'sine'
+    o.frequency.value = freq * mult
+    const og = c.createGain()
+    og.gain.value = amp
+    o.connect(og).connect(g)
+    o.start(at)
+    o.stop(at + dur + 0.05)
+  }
+}
+
 function playBass(at: number, freq: number, bus: GainNode) {
   const c = ctx!
   const o = c.createOscillator()
@@ -268,12 +324,14 @@ function setTrack(t: Track) {
 function scheduleStep(step: number, at: number) {
   const bus = bgmBus!
   const t = track
-  if (t.don.includes(step)) playDon(at, bus, 0.9)
-  if (t.ka.includes(step)) playKa(at, bus, 0.6)
+  if (t.don.includes(step)) playDon(at, bus, 0.5)
+  if (t.ka.includes(step)) playKa(at, bus, 0.3)
+  if (t.clap?.includes(step)) playClap(at, bus, 0.45)
   if (step % t.melodyStep === 0) {
     const f = t.melody[(step / t.melodyStep) % t.melody.length]
     if (f) {
       if (t.voice === 'flute') playFlute(at, f, bus, t.noteDur, 0.9)
+      else if (t.voice === 'bell') playBell(at, f, bus, t.noteDur, 0.85)
       else playPluck(at, f, bus, t.noteDur, 0.8)
     }
   }
@@ -307,6 +365,7 @@ function bgmTick() {
 }
 
 let trackChanged: (() => void) | null = null
+let stateBecameRunning: (() => void) | null = null
 let bgmKind: 'home' | 'result' = 'home'
 let playingKind: 'home' | 'result' = 'home'
 
@@ -320,13 +379,29 @@ export const useSound = () => {
   const bgmWanted = useState<boolean>('snd-bgm-wanted', () => false)
   const trackName = useState<string>('snd-track', () => '')
   trackChanged = () => { trackName.value = track.name }
-
-  function unlock() {
-    const c = ensure()
-    if (!c) return
-    if (c.state === 'suspended') c.resume().catch(() => {})
+  stateBecameRunning = () => {
     unlocked.value = true
     if (bgmWanted.value && bgmOn.value && !bgmPlaying.value) startBgm(bgmKind)
+  }
+
+  // 嘗試把 AudioContext 叫醒。回傳是否真的在跑(running)。
+  // 沒有使用者互動時瀏覽器會拒絕,呼叫無害;成功就把想播的 BGM 補播。
+  async function unlock(): Promise<boolean> {
+    const c = ensure()
+    if (!c) return false
+    if (c.state !== 'running') {
+      try {
+        await c.resume()
+      } catch {
+        /* 尚未有使用者互動 */
+      }
+    }
+    const running = c.state === 'running'
+    if (running) {
+      unlocked.value = true
+      if (bgmWanted.value && bgmOn.value && !bgmPlaying.value) startBgm(bgmKind)
+    }
+    return running
   }
 
   function sfx(kind: 'don' | 'ka' | 'fail' | 'clear' | 'fanfare') {

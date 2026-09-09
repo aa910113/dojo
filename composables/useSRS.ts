@@ -1,4 +1,13 @@
-import { ALL_KANA, STAGES, type KanaEntry, type KanaScript, type Stage } from '~/data/kana'
+import {
+  ALL_KANA,
+  STAGES,
+  buildStages,
+  LEGACY_PART_ORDER,
+  type KanaEntry,
+  type KanaScript,
+  type Stage,
+  type StageMode,
+} from '~/data/kana'
 
 export interface CardState {
   id: string
@@ -23,6 +32,10 @@ export interface Settings {
   newPerDay: number
   sessionMinutes: number
   autoPlaySound: boolean
+  // 兩種假名都選時的學習順序:separate = 先平假名再片假名;mixed = 同一行一起背
+  stageMode: StageMode
+  // 重點練習的出題方式:type = 只打拼音;write = 只手寫;mix = 兩種交錯
+  practiceMode: 'type' | 'write' | 'mix'
   sfx: boolean
   bgm: boolean
   examDate: string
@@ -72,8 +85,10 @@ export interface PersistShape {
   cards: Record<string, CardState>
   settings: Settings
   daily: Record<string, DailyStats>
-  // 已通過的關卡數。解鎖數 = min(passed + 1, 總關數)
+  // 舊欄位:已通過的關卡數(照「平假名 10 關 → 片假名 10 關」計算),保留給遷移
   passedStages: number
+  // 已通過的「腳本:行序」。用穩定鍵值記錄,切換學習順序後進度不會歸零
+  passedParts: string[]
 }
 
 const DEFAULTS: Settings = {
@@ -81,6 +96,8 @@ const DEFAULTS: Settings = {
   newPerDay: 6,
   sessionMinutes: 15,
   autoPlaySound: true,
+  stageMode: 'separate',
+  practiceMode: 'mix',
   sfx: true,
   bgm: true,
   examDate: '2026-07-05',
@@ -151,7 +168,7 @@ function freshCard(id: string): CardState {
 
 function loadPersist(): PersistShape {
   if (typeof window === 'undefined') {
-    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
+    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0, passedParts: [] }
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -164,14 +181,15 @@ function loadPersist(): PersistShape {
       cards,
       settings: { ...DEFAULTS, ...(parsed.settings ?? {}) },
       daily: parsed.daily ?? {},
-      passedStages: normalizePassedStages(parsed.passedStages, cards),
+      passedStages: 0,
+      passedParts: normalizePassedParts(parsed.passedParts, parsed.passedStages, cards),
     }
   } catch {
-    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
+    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0, passedParts: [] }
   }
 }
 
-// 舊資料沒有 passedStages → 依「已學過的字落在哪一關」推算,
+// 更舊的資料連 passedStages 都沒有 → 依「已學過的字落在哪一關」推算,
 // 讓既有使用者不會被鎖回第一關。
 function inferPassedStages(cards: Record<string, CardState>): number {
   let highest = -1
@@ -182,11 +200,20 @@ function inferPassedStages(cards: Record<string, CardState>): number {
   return Math.max(0, highest)
 }
 
-function normalizePassedStages(raw: unknown, cards: Record<string, CardState>): number {
-  if (typeof raw === 'number' && isFinite(raw)) {
-    return Math.max(0, Math.min(STAGES.length, Math.floor(raw)))
+// 通過紀錄一律換算成 parts;舊的數字欄位照 LEGACY_PART_ORDER 展開
+function normalizePassedParts(
+  rawParts: unknown,
+  rawCount: unknown,
+  cards: Record<string, CardState>,
+): string[] {
+  if (Array.isArray(rawParts)) {
+    const valid = new Set(LEGACY_PART_ORDER)
+    return [...new Set(rawParts.filter((x): x is string => typeof x === 'string' && valid.has(x)))]
   }
-  return inferPassedStages(cards)
+  const n = typeof rawCount === 'number' && isFinite(rawCount)
+    ? Math.max(0, Math.min(LEGACY_PART_ORDER.length, Math.floor(rawCount)))
+    : inferPassedStages(cards)
+  return LEGACY_PART_ORDER.slice(0, n)
 }
 
 function ensureCard(cards: Record<string, CardState>, id: string): CardState {
@@ -239,16 +266,6 @@ export const useSRS = () => {
   const testCorrectIds = useState<string[]>('srs-test-correct-ids', () => [])
   const testWrongIds = useState<string[]>('srs-test-wrong-ids', () => [])
 
-  // === Bottom 6 衝刺 ===
-  // 只練最低準確率的 6 張,洗牌循環,跑滿時間結束
-  const drillPool = useState<string[]>('srs-drill-pool', () => [])
-  const drillQueue = useState<string[]>('srs-drill-queue', () => [])
-  const drillSecondsLeft = useState<number>('srs-drill-seconds', () => 0)
-  const drillStats = useState<Record<string, { correct: number; wrong: number }>>(
-    'srs-drill-stats',
-    () => ({}),
-  )
-
   function save() {
     if (typeof window === 'undefined') return
     try {
@@ -266,19 +283,38 @@ export const useSRS = () => {
   }
 
   // === 關卡 ===
+  // 關卡清單跟著「要練哪些假名」與「學習順序」走
+  const stages = computed(() =>
+    buildStages(persist.value.settings.scripts, persist.value.settings.stageMode ?? 'separate'),
+  )
+
+  const passedParts = computed(() => new Set(persist.value.passedParts ?? []))
+
   const stageInfo = computed(() => {
-    const total = STAGES.length
-    const passed = Math.max(0, Math.min(total, persist.value.passedStages ?? 0))
+    const list = stages.value
+    const done = passedParts.value
+    // 只算「從第一關開始連續通過」的數量,切換順序後也不會跳關
+    let passed = 0
+    for (const st of list) {
+      if (st.parts.every((k) => done.has(k))) passed += 1
+      else break
+    }
+    const total = list.length
     const unlocked = Math.min(total, passed + 1)
     const allPassed = passed >= total
-    const current: Stage | null = allPassed ? null : STAGES[unlocked - 1]
+    const current: Stage | null = allPassed ? null : list[unlocked - 1] ?? null
     return { total, passed, unlocked, allPassed, current }
   })
 
   const unlockedCardIds = computed(() => {
     const set = new Set<string>()
+    const list = stages.value
     for (let i = 0; i < stageInfo.value.unlocked; i++) {
-      for (const id of STAGES[i].cardIds) set.add(id)
+      for (const id of list[i]?.cardIds ?? []) set.add(id)
+    }
+    // 已經學過的字永遠保持解鎖:換學習順序時不會把讀過的字收回去
+    for (const [id, c] of Object.entries(persist.value.cards)) {
+      if (c?.introduced) set.add(id)
     }
     return set
   })
@@ -309,10 +345,13 @@ export const useSRS = () => {
     const correct = new Set(correctIds)
     const wrongInStage = stage.cardIds.filter((id) => !correct.has(id))
     const passed = wrongInStage.length === 0
-    const next = passed && stage.index + 1 < STAGES.length ? STAGES[stage.index + 1] : null
+    const list = stages.value
+    const next = passed && stage.index + 1 < list.length ? list[stage.index + 1] : null
     lastStageResult.value = { passed, stage, next, wrongInStage }
     if (passed) {
-      persist.value.passedStages = Math.min(STAGES.length, stage.index + 1)
+      const done = new Set(persist.value.passedParts ?? [])
+      for (const k of stage.parts) done.add(k)
+      persist.value.passedParts = [...done]
       save()
     }
   }
@@ -658,7 +697,7 @@ export const useSRS = () => {
   }
 
   function resetAll() {
-    persist.value = { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
+    persist.value = { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0, passedParts: [] }
     lastStageResult.value = null
     save()
   }
@@ -674,7 +713,8 @@ export const useSRS = () => {
       cards,
       settings: { ...DEFAULTS, ...(d.settings ?? {}) },
       daily: (d.daily as Record<string, DailyStats>) ?? {},
-      passedStages: normalizePassedStages(d.passedStages, cards),
+      passedStages: 0,
+      passedParts: normalizePassedParts(d.passedParts, d.passedStages, cards),
     }
     save()
     return true
@@ -857,64 +897,6 @@ export const useSRS = () => {
     testWrongIds.value = []
   }
 
-  // === Bottom 6 衝刺 ===
-  // 用 effectiveAccuracy (最近 N 次的對的比例) 排序,讓「現在還在卡」的字浮上來,
-  // 不是被歷史包袱定死。streak 不套用 —— 使用者明確要練「最差的 6 張」。
-  function startDrillSession(seconds = 600, n = 6): number {
-    const intro = activePool()
-      .map((k) => {
-        const c = persist.value.cards[k.id]
-        if (!c?.introduced) return null
-        const acc = effectiveAccuracy(c)
-        return { id: k.id, acc, reps: c.reps }
-      })
-      .filter((x): x is { id: string; acc: number; reps: number } => x !== null)
-
-    if (intro.length === 0) return 0
-
-    const sorted = intro.sort((a, b) => a.acc - b.acc || b.reps - a.reps)
-    const pool = sorted.slice(0, n).map((x) => x.id)
-    drillPool.value = pool
-    drillQueue.value = [...pool].sort(() => Math.random() - 0.5)
-    drillSecondsLeft.value = seconds
-    drillStats.value = Object.fromEntries(pool.map((id) => [id, { correct: 0, wrong: 0 }]))
-    return pool.length
-  }
-
-  function pickDrillCard(): KanaEntry | null {
-    if (drillQueue.value.length === 0 && drillPool.value.length > 0) {
-      // 隊伍空了 → 重新洗牌再來一輪
-      drillQueue.value = [...drillPool.value].sort(() => Math.random() - 0.5)
-    }
-    const id = drillQueue.value[0]
-    if (!id) return null
-    return ALL_KANA.find((k) => k.id === id) ?? null
-  }
-
-  function drillAnswer(id: string, correct: boolean) {
-    if (drillQueue.value[0] !== id) return
-    drillQueue.value = drillQueue.value.slice(1)
-    const cur = drillStats.value[id] ?? { correct: 0, wrong: 0 }
-    drillStats.value = {
-      ...drillStats.value,
-      [id]: correct
-        ? { ...cur, correct: cur.correct + 1 }
-        : { ...cur, wrong: cur.wrong + 1 },
-    }
-  }
-
-  function tickDrill(delta: number): boolean {
-    drillSecondsLeft.value = Math.max(0, drillSecondsLeft.value - delta)
-    return drillSecondsLeft.value === 0
-  }
-
-  function endDrillSession() {
-    drillPool.value = []
-    drillQueue.value = []
-    drillSecondsLeft.value = 0
-    drillStats.value = {}
-  }
-
   return {
     settings,
     stats,
@@ -958,16 +940,8 @@ export const useSRS = () => {
     pickTestCard,
     testAnswer,
     endTestSession,
-    drillPool,
-    drillQueue,
-    drillSecondsLeft,
-    drillStats,
-    startDrillSession,
-    pickDrillCard,
-    drillAnswer,
-    tickDrill,
-    endDrillSession,
     effectiveAccuracy,
+    stages,
     stageInfo,
     isUnlocked,
     lastStageResult,
