@@ -2,7 +2,7 @@
 import type { KanaEntry, Stage } from '~/data/kana'
 import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stages, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, effectiveAccuracy, stages, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -138,122 +138,6 @@ const testCorrectCards = computed(() =>
     .map((id) => ALL_KANA.find((k) => k.id === id))
     .filter((k): k is KanaEntry => !!k),
 )
-
-const drillFinished = ref(false)
-const DRILL_SECONDS = 600
-const drillTimePct = computed(() => Math.max(0, Math.min(100, (drillSecondsLeft.value / DRILL_SECONDS) * 100)))
-const drillActive = computed(() => drillPool.value.length > 0 || drillFinished.value)
-let drillTimerHandle: number | null = null
-let drillLastTickAt = 0
-
-const drillTimeText = computed(() => {
-  const s = drillSecondsLeft.value
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return `${m}:${String(r).padStart(2, '0')}`
-})
-
-const drillPoolCards = computed(() =>
-  drillPool.value
-    .map((id) => ALL_KANA.find((k) => k.id === id))
-    .filter((k): k is KanaEntry => !!k),
-)
-
-function next_drill_card_or_finish() {
-  if (drillSecondsLeft.value === 0) {
-    drillFinished.value = true
-    current.value = null
-    if (drillTimerHandle != null) {
-      clearInterval(drillTimerHandle)
-      drillTimerHandle = null
-    }
-    flushCloud()
-    return
-  }
-  const card = pickDrillCard()
-  if (!card) {
-    drillFinished.value = true
-    current.value = null
-    flushCloud()
-    return
-  }
-  current.value = card
-  input.value = ''
-  feedback.value = 'idle'
-  firstTry.value = true
-  wrongCount.value = 0
-  showAnswer.value = false
-  locked.value = false
-  nextTick(() => inputEl.value?.focus())
-}
-
-function startDrill() {
-  sfx('ka')
-  sessionStarted.value = true
-  sessionCorrect.value = 0
-  sessionWrong.value = 0
-  combo.value = 0
-  comboBest.value = 0
-  resetSessionLapses()
-  drillFinished.value = false
-  const n = startDrillSession(600, 6)
-  if (n === 0) {
-    alert('還沒有學過的字可以衝刺 — 先做「重點練習」學目前關卡的字')
-    sessionStarted.value = false
-    return
-  }
-  drillLastTickAt = Date.now()
-  drillTimerHandle = window.setInterval(() => {
-    const now = Date.now()
-    const delta = Math.round((now - drillLastTickAt) / 1000)
-    drillLastTickAt = now
-    if (delta <= 0) return
-    const done = tickDrill(delta)
-    if (done && !drillFinished.value) {
-      // 時間到 → 收尾。若使用者正在打字,讓他的下一個 enter 自動結束。
-      // 這裡僅停 interval,主結束流程交給 next_drill_card_or_finish。
-      if (drillTimerHandle != null) {
-        clearInterval(drillTimerHandle)
-        drillTimerHandle = null
-      }
-      // 若目前沒有 lock(沒有正在收 setTimeout),直接收尾
-      if (!locked.value) {
-        drillFinished.value = true
-        current.value = null
-        flushCloud()
-      }
-    }
-  }, 1000)
-  next_drill_card_or_finish()
-}
-
-function finishDrill() {
-  if (drillTimerHandle != null) {
-    clearInterval(drillTimerHandle)
-    drillTimerHandle = null
-  }
-  endDrillSession()
-  drillFinished.value = false
-  sessionStarted.value = false
-  current.value = null
-  input.value = ''
-}
-
-function skipDrillCard() {
-  if (!current.value) return
-  feedback.value = 'bad'
-  sfx('fail')
-  review(current.value.id, false, false)
-  sessionWrong.value += 1
-  resetCombo()
-  drillAnswer(current.value.id, false)
-  locked.value = true
-  setTimeout(() => next_drill_card_or_finish(), 500)
-}
-
-onBeforeUnmount(() => {
-  if (drillTimerHandle != null) clearInterval(drillTimerHandle)
-})
 
 // === 首頁關卡列表(選曲畫面風) ===
 type StageStatus = 'passed' | 'current' | 'locked'
@@ -526,10 +410,10 @@ watch(sessionStarted, (started) => {
   else startBgm('home')
 }, { immediate: true })
 
-const onDoneScreen = computed(() => focusFinished.value || testFinished.value || drillFinished.value)
+const onDoneScreen = computed(() => focusFinished.value || testFinished.value)
 
 // === 練習計時 ===
-// 在任何模式裡(重點 / 測驗 / 衝刺 / 手寫)每秒累加,結果畫面與分頁切到背景時暫停;
+// 在任何模式裡(重點練習 / 拼音測驗 / 手寫測驗)每秒累加,結果畫面與分頁切到背景時暫停;
 // 每 10 秒寫進今日統計一次,結束時把剩餘的補上
 const studying = computed(() => sessionStarted.value && !onDoneScreen.value)
 const sessionSeconds = ref(0)
@@ -674,34 +558,6 @@ function checkAnswer(value: string) {
   const accepts = current.value.accepts
   const exact = accepts.includes(cleaned)
   const partialMatch = accepts.some((a) => a.startsWith(cleaned))
-
-  // === Bottom 6 衝刺模式 ===
-  if (drillActive.value && !drillFinished.value) {
-    if (exact) {
-      feedback.value = 'good'
-      sfx('don')
-      locked.value = true
-      review(current.value.id, true, firstTry.value)
-      sessionCorrect.value += 1
-      bumpCombo()
-      drillAnswer(current.value.id, true)
-      if (settings.value.autoPlaySound) speak(current.value.char)
-      setTimeout(() => next_drill_card_or_finish(), 400)
-      return
-    }
-    const longestD = Math.max(...accepts.map((a) => a.length))
-    if (!partialMatch || cleaned.length >= longestD) {
-      feedback.value = 'bad'
-      sfx('fail')
-      locked.value = true
-      review(current.value.id, false, false)
-      sessionWrong.value += 1
-      resetCombo()
-      drillAnswer(current.value.id, false)
-      setTimeout(() => next_drill_card_or_finish(), 600)
-    }
-    return
-  }
 
   // === 測驗模式 ===
   if (testActive.value && !testFinished.value) {
@@ -1511,16 +1367,12 @@ const examCountdown = computed(() => {
         <div class="mode-grid">
           <button class="mode-pill mode-normal" :class="{ ready: stageReadyToTest }" @click="startTest">
             <span v-if="stageReadyToTest" class="mode-badge disp">解鎖！</span>
-            <span class="mode-jp disp">ふつう</span>
-            <span class="mode-zh">隨機測驗</span>
-          </button>
-          <button class="mode-pill mode-oni" @click="startDrill">
-            <span class="mode-jp disp">おに</span>
-            <span class="mode-zh">衝刺</span>
+            <span class="mode-jp disp">ローマ字</span>
+            <span class="mode-zh">拼音測驗</span>
           </button>
           <button class="mode-pill mode-trace" @click="startTrace">
             <span class="mode-jp disp">かきとり</span>
-            <span class="mode-zh">手寫</span>
+            <span class="mode-zh">手寫測驗</span>
           </button>
         </div>
 
@@ -1542,7 +1394,7 @@ const examCountdown = computed(() => {
                 <span v-for="(line, li) in row.stage.charLines" :key="li">{{ line.join('') }}</span>
               </div>
               <div v-if="row.status === 'passed'" class="stage-row-status">クリア！ 準確率 {{ row.accuracy }}%</div>
-              <div v-else-if="row.status === 'current' && row.introduced >= row.total" class="stage-row-status">已學 {{ row.total }} / {{ row.total }} · 測驗全對即解鎖下一關</div>
+              <div v-else-if="row.status === 'current' && row.introduced >= row.total" class="stage-row-status">已學 {{ row.total }} / {{ row.total }} · 拼音測驗全對即解鎖下一關</div>
               <div v-else-if="row.status === 'current'" class="stage-row-status">挑戰中 · 已學 {{ row.introduced }} / {{ row.total }}</div>
               <div v-else-if="row.stage.index === stageInfo.unlocked" class="stage-row-status">通過 {{ row.prevLabel }} 後解鎖</div>
               <div v-else class="stage-row-status">{{ scriptName(row.stage.script) }}</div>
@@ -1565,7 +1417,7 @@ const examCountdown = computed(() => {
 
       <section v-else-if="traceActive" class="panel session trace-panel">
         <div class="session-bar">
-          <div class="quiz-title disp">手寫</div>
+          <div class="quiz-title disp">手寫測驗</div>
           <div class="session-meta disp">
             <span>{{ traceIndex + 1 }} / {{ traceCards.length }}</span>
           </div>
@@ -1612,100 +1464,9 @@ const examCountdown = computed(() => {
         </div>
       </section>
 
-      <section v-else-if="drillActive && !drillFinished" class="panel session drill-panel">
-        <div class="session-bar">
-          <div class="quiz-title disp">衝刺</div>
-          <div class="session-meta disp">
-            <span class="ok">✓{{ sessionCorrect }}</span>
-            <span class="ng">✗{{ sessionWrong }}</span>
-            <span class="timer" :class="{ low: drillSecondsLeft <= 60 }">{{ drillTimeText }}</span>
-          </div>
-          <button class="btn-ghost arcade" @click="finishDrill">結束</button>
-        </div>
-
-        <!-- 量表 = 剩餘時間 -->
-        <div class="gauge" :class="{ low: drillSecondsLeft <= 60 }">
-          <span class="gauge-bar"><span class="gauge-fill time" :style="{ width: drillTimePct + '%' }"></span></span>
-        </div>
-
-        <div v-if="current" class="card focus-card" :data-state="feedback">
-          <div class="combo-row">
-            <transition name="pop">
-              <span v-if="combo >= 2" :key="combo" class="combo-pill disp">{{ combo }} コンボ</span>
-            </transition>
-          </div>
-          <div class="kana-face-wrap">
-            <div class="kana-face">
-              <div class="kana">{{ current.char }}</div>
-            </div>
-            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playCurrent">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
-            </button>
-          </div>
-          <div class="tag-row">
-            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="chip-tag chip-oni disp">おに</span>
-          </div>
-          <input
-            ref="inputEl"
-            v-model="input"
-            class="answer-input"
-            :class="{ good: feedback === 'good', bad: feedback === 'bad' }"
-            autocomplete="off"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            placeholder="輸入羅馬字"
-            @keydown.enter.prevent="checkAnswer(input)"
-          />
-          <div class="hint-row">
-            <button class="btn-ghost arcade small" @click="skipDrillCard">我不會</button>
-            <span class="quiz-hint muted">最弱 6 張洗牌循環到時間到</span>
-          </div>
-        </div>
-      </section>
-
-      <section v-else-if="drillFinished" class="panel session drill-done-panel celebrate">
-        <div class="sunburst"></div>
-        <div class="done-banner">
-          <div class="done-title disp">終了！</div>
-          <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
-          <div class="done-sub">Bottom 6 衝刺 · 10 分鐘</div>
-        </div>
-        <div class="done-stats">
-          <div class="done-stat good">
-            <span class="done-num disp">{{ sessionCorrect }}</span>
-            <span class="done-label">答對</span>
-          </div>
-          <div class="done-stat bad">
-            <span class="done-num disp">{{ sessionWrong }}</span>
-            <span class="done-label">答錯</span>
-          </div>
-          <div class="done-stat combo">
-            <span class="done-num disp">{{ comboBest }}</span>
-            <span class="done-label">最高コンボ</span>
-          </div>
-        </div>
-        <div class="drill-summary-list">
-          <div
-            v-for="k in drillPoolCards"
-            :key="k.id"
-            class="drill-summary-row"
-          >
-            <span class="drill-summary-char">{{ k.char }}</span>
-            <span class="drill-summary-romaji">{{ k.romaji }}</span>
-            <span class="drill-summary-stats">
-              <span class="ok">✓ {{ drillStats[k.id]?.correct ?? 0 }}</span>
-              <span class="ng">✗ {{ drillStats[k.id]?.wrong ?? 0 }}</span>
-            </span>
-          </div>
-        </div>
-        <button class="primary big disp" @click="finishDrill">回到首頁</button>
-      </section>
-
       <section v-else-if="testActive && !testFinished" class="panel session test-panel">
         <div class="session-bar">
-          <div class="quiz-title disp">隨機測驗</div>
+          <div class="quiz-title disp">拼音測驗</div>
           <div class="session-meta disp">
             <span class="ok">✓{{ testCorrectIds.length }}</span>
             <span class="ng">✗{{ testWrongIds.length }}</span>
@@ -1744,7 +1505,7 @@ const examCountdown = computed(() => {
           </div>
           <div class="tag-row">
             <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="chip-tag chip-test disp">測驗</span>
+            <span class="chip-tag chip-test disp">拼音</span>
           </div>
           <input
             ref="inputEl"
@@ -1770,7 +1531,7 @@ const examCountdown = computed(() => {
         <div class="done-banner">
           <div class="done-title disp">{{ lastStageResult?.passed ? '合格！' : '終了' }}</div>
           <div v-if="fullCombo" class="full-combo disp">フルコンボ！</div>
-          <div class="done-sub">隨機測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
+          <div class="done-sub">拼音測驗 · {{ testTotal }} 張 · {{ fmtClock(sessionSeconds) }}</div>
         </div>
         <div v-if="lastStageResult" class="stage-result" :class="lastStageResult.passed ? 'pass' : 'fail'">
           <template v-if="lastStageResult.passed">
@@ -1926,7 +1687,7 @@ const examCountdown = computed(() => {
           </div>
         </div>
         <p v-if="stageReadyToTest && stageInfo.current" class="muted focus-done-note">
-          {{ stageInfo.current.label }} 的字都學過了。隔一段時間再來測驗,一次全對就解鎖下一關 ——
+          {{ stageInfo.current.label }} 的字都學過了。隔一段時間再來拼音測驗,一次全對就解鎖下一關 ——
           剛練完馬上測驗考的是短期記憶,過了也不代表真的記住。
         </p>
         <p v-else class="muted focus-done-note">
@@ -1986,9 +1747,6 @@ const examCountdown = computed(() => {
 }
 .page.in-session.kb-open .kana-face-wrap::before { box-shadow: 0 4px 0 var(--ink); }
 .page.in-session.kb-open .kana-face { inset: calc(var(--drum) * 0.09); }
-.page.in-session.kb-open .drill-panel .quiz-title,
-.page.in-session.kb-open .drill-panel .session-meta.disp,
-.page.in-session.kb-open .drill-panel .session-meta.disp .timer { color: var(--ink); }
 .page.in-session.kb-open .kana-face .kana { font-size: calc(var(--drum) * 0.60); }
 .page.in-session.kb-open .kana-face.with-reading .kana { font-size: calc(var(--drum) * 0.50); }
 .page.in-session.kb-open .kana-reading { font-size: calc(var(--drum) * 0.14); margin-top: 0; }
@@ -2230,8 +1988,6 @@ const examCountdown = computed(() => {
 .session-meta.disp { font-size: 13px; gap: 8px; letter-spacing: 0.04em; color: var(--muted); white-space: nowrap; }
 .session-bar { gap: 8px; }
 .session-bar .btn-ghost.arcade { white-space: nowrap; flex-shrink: 0; }
-.drill-panel .session-meta.disp .ok,
-.drill-panel .session-meta.disp .ng { color: var(--panel); }
 .session-clock { font-variant-numeric: tabular-nums; opacity: 0.8; }
 
 /* 描邊版按鈕(結束 / 看答案 / 喇叭) */
@@ -2284,7 +2040,6 @@ const examCountdown = computed(() => {
 .gauge-fill.time { background: var(--accent); }
 .gauge.low .gauge-fill.time { background: var(--bad); }
 .chip-tag.chip-test { background: var(--star); }
-.chip-tag.chip-oni { background: var(--bad); color: var(--panel); }
 .session-meta.disp .timer { font-size: 16px; color: var(--ink); }
 .session-meta.disp .ok { color: var(--good); }
 .session-meta.disp .ng { color: var(--bad); }
@@ -2312,7 +2067,7 @@ const examCountdown = computed(() => {
   to { transform: scale(1); opacity: 1; }
 }
 
-/* ===== 練習 / 測驗 / 衝刺 的彩色填充 ===== */
+/* ===== 練習 / 測驗 畫面的彩色填充 ===== */
 .panel.session {
   position: relative;
   overflow: hidden;
@@ -2321,7 +2076,6 @@ const examCountdown = computed(() => {
 }
 .panel.session.focus-panel { --band: var(--accent); --ring: var(--accent); }
 .panel.session.test-panel { --band: var(--star); --ring: var(--star); }
-.panel.session.drill-panel { --band: var(--bad); --ring: var(--bad); }
 .panel.session.trace-panel { --band: var(--good); --ring: var(--good); }
 /* 頂部彩色市松格帶,session-bar 與量表坐在上面 */
 .panel.session::before {
@@ -2346,10 +2100,6 @@ const examCountdown = computed(() => {
 /* 手寫沒有量表,頭帶只蓋住標題列,chip 排在帶子下面 */
 .panel.session.trace-panel::before { height: 78px; }
 .trace-panel .session-meta.disp { color: var(--ink); opacity: 0.7; }
-.drill-panel .session-meta.disp .timer { color: var(--panel); }
-.drill-panel .quiz-title,
-.drill-panel .session-meta.disp { color: var(--panel); }
-
 /* 鼓面卡片:外圈彩色鼓身 + 內圈白色鼓面 */
 .kana-face-wrap {
   position: relative;
@@ -2584,37 +2334,6 @@ const examCountdown = computed(() => {
 .quiz-correct-chip {
   border-color: rgba(var(--good-rgb), 0.55) !important;
   background: rgba(var(--good-rgb), 0.10) !important;
-}
-.drill-summary-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 16px 0 24px;
-}
-.drill-summary-row {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 10px 14px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-.drill-summary-char {
-  font-size: 22px;
-  font-weight: 600;
-  min-width: 1.8em;
-}
-.drill-summary-romaji {
-  font-size: 12px;
-  color: var(--muted);
-  flex: 1;
-}
-.drill-summary-stats {
-  display: flex;
-  gap: 10px;
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
 }
 .session-meta .timer {
   font-size: 16px;
@@ -3302,7 +3021,7 @@ const examCountdown = computed(() => {
 }
 .mode-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 .mode-pill {
@@ -3322,10 +3041,9 @@ const examCountdown = computed(() => {
   transform: translateY(3px);
   box-shadow: 0 0 0 var(--ink);
 }
-.mode-jp { font-size: 10px; letter-spacing: 0.08em; }
-.mode-zh { font-size: 12px; font-weight: 700; }
+.mode-jp { font-size: 11px; letter-spacing: 0.08em; }
+.mode-zh { font-size: 14px; font-weight: 700; }
 .mode-normal { background: var(--accent); }
-.mode-oni { background: var(--bad); color: var(--panel); }
 .stage-list {
   display: flex;
   flex-direction: column;
