@@ -14,6 +14,28 @@ const focusProgress = computed(() =>
     : 0,
 )
 
+// 這一回合考打字還是手寫。新字一定先用打字(帶讀法)學過字形,才有東西可以回想
+const focusRound = ref<'type' | 'write'>('type')
+const focusBoard = ref<{
+  clear: () => void
+  undo: () => void
+  hasInk: boolean
+  getStrokes: () => { x: number; y: number }[][]
+} | null>(null)
+const focusRevealed = ref(false)
+const focusVerdict = ref<RecognizeResult | null>(null)
+const focusOverride = ref<boolean | null>(null)
+const focusOk = computed(() => focusOverride.value ?? focusVerdict.value?.ok ?? false)
+const focusVerdictText = computed(() => verdictText(focusVerdict.value))
+
+function pickRound(isNew: boolean): 'type' | 'write' {
+  if (isNew) return 'type'
+  const m = settings.value.practiceMode ?? 'mix'
+  if (m === 'type') return 'type'
+  if (m === 'write') return 'write'
+  return Math.random() < 0.5 ? 'type' : 'write'
+}
+
 function next_focus_card_or_finish() {
   const card = pickFocusCard()
   if (!card) {
@@ -30,7 +52,41 @@ function next_focus_card_or_finish() {
   locked.value = false
   isNewCard.value = !getCardState(card.id)?.introduced
   showAnswer.value = isNewCard.value
-  nextTick(() => inputEl.value?.focus())
+  focusRound.value = pickRound(isNewCard.value)
+  focusRevealed.value = false
+  focusVerdict.value = null
+  focusOverride.value = null
+  focusBoard.value?.clear()
+  if (focusRound.value === 'type') nextTick(() => inputEl.value?.focus())
+}
+
+// 手寫回合:辨識是客觀判定,所以和打字一樣計入間隔重複
+function focusWriteReveal() {
+  const card = current.value
+  if (!card) return
+  focusVerdict.value = recognizeKana(focusBoard.value?.getStrokes() ?? [], card.char, card.script)
+  focusOverride.value = null
+  focusRevealed.value = true
+  const ok = focusVerdict.value.ok
+  feedback.value = ok ? 'good' : 'bad'
+  sfx(ok ? 'don' : 'fail')
+}
+
+function focusWriteNext() {
+  const card = current.value
+  if (!card) return
+  const ok = focusOk.value
+  if (ok) {
+    review(card.id, true, true)
+    sessionCorrect.value += 1
+    bumpCombo()
+  } else {
+    review(card.id, false, false)
+    sessionWrong.value += 1
+    resetCombo()
+  }
+  focusAnswer(card.id, ok)
+  next_focus_card_or_finish()
 }
 
 function startFocus() {
@@ -226,8 +282,7 @@ const writeVerdict = ref<RecognizeResult | null>(null)
 const writeOverride = ref<boolean | null>(null)
 const writeOk = computed(() => writeOverride.value ?? writeVerdict.value?.ok ?? false)
 
-const writeVerdictText = computed(() => {
-  const r = writeVerdict.value
+function verdictText(r: RecognizeResult | null): string {
   if (!r) return ''
   switch (r.reason) {
     case 'ok': return '辨識正確'
@@ -237,7 +292,8 @@ const writeVerdictText = computed(() => {
     case 'empty': return '還沒寫'
     default: return '認不出來'
   }
-})
+}
+const writeVerdictText = computed(() => verdictText(writeVerdict.value))
 const writeFinished = ref(false)
 
 const traceActive = computed(() => writeQueue.value.length > 0 || writeFinished.value)
@@ -1326,6 +1382,17 @@ const examCountdown = computed(() => {
           只勾選一種假名時沒有差別。
         </p>
         <div class="setting-row">
+          <span class="setting-label">練習方式</span>
+          <div class="toggle-group">
+            <button class="toggle" :class="{ active: settings.practiceMode === 'type' }" @click="updateSettings({ practiceMode: 'type' })">打拼音</button>
+            <button class="toggle" :class="{ active: settings.practiceMode === 'write' }" @click="updateSettings({ practiceMode: 'write' })">手寫</button>
+            <button class="toggle" :class="{ active: settings.practiceMode === 'mix' }" @click="updateSettings({ practiceMode: 'mix' })">混合</button>
+          </div>
+        </div>
+        <p class="setting-note muted">
+          重點練習每張卡要考什麼。混合會隨機交錯兩種,兩個方向都練得到。新字一律先用打拼音學字形。
+        </p>
+        <div class="setting-row">
           <span class="setting-label">每日新字</span>
           <input
             type="number"
@@ -1734,7 +1801,15 @@ const examCountdown = computed(() => {
             </transition>
           </div>
 
-          <div class="kana-face-wrap">
+          <!-- 手寫回合不能露出字形,用羅馬字當題目,版面也比鼓面精簡 -->
+          <div v-if="focusRound === 'write'" class="trace-head">
+            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="trace-romaji disp">{{ current.romaji }}</span>
+            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playCurrent">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
+            </button>
+          </div>
+          <div v-else class="kana-face-wrap">
             <div class="kana-face" :class="{ 'with-reading': isNewCard }">
               <div class="kana">{{ current.char }}</div>
               <div v-if="isNewCard" class="kana-reading disp">{{ current.romaji }}</div>
@@ -1750,9 +1825,11 @@ const examCountdown = computed(() => {
           </div>
 
           <div class="tag-row">
-            <span class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <!-- 手寫回合的題目列已經標了假名種類,這裡不重複 -->
+            <span v-if="focusRound !== 'write'" class="chip-tag">{{ current.script === 'hiragana' ? '平假名' : '片假名' }}</span>
             <span v-if="isNewCard" class="chip-tag chip-new disp">新字</span>
-            <span v-else class="chip-tag chip-focus disp">重點</span>
+            <span v-else-if="focusRound === 'write'" class="chip-tag chip-write disp">手寫</span>
+            <span v-else class="chip-tag chip-focus disp">拼音</span>
             <span class="focus-progress-dots" :title="`已對 ${focusProgressFor(current.id).done}/${focusProgressFor(current.id).needed} 次`">
               <span
                 v-for="i in focusProgressFor(current.id).needed"
@@ -1763,6 +1840,34 @@ const examCountdown = computed(() => {
             </span>
           </div>
 
+          <template v-if="focusRound === 'write'">
+            <div v-if="focusRevealed" class="verdict" :class="focusOk ? 'good' : 'bad'">
+              <span class="verdict-mark disp">{{ focusOk ? '✓' : '✗' }}</span>
+              <span>{{ focusOverride === null ? focusVerdictText : (focusOk ? '已改判為寫對' : '已改判為沒寫對') }}</span>
+            </div>
+            <p v-else class="trace-prompt">寫出這個音的假名</p>
+
+            <div class="focus-board">
+              <TraceBoard ref="focusBoard" :char="current.char" :show-guide="focusRevealed" />
+            </div>
+
+            <div class="trace-tools">
+              <button class="btn-ghost arcade small" @click="focusBoard?.undo()">上一筆</button>
+              <button class="btn-ghost arcade small" @click="focusBoard?.clear()">清除</button>
+              <button
+                v-if="focusRevealed"
+                class="btn-ghost arcade small"
+                @click="focusOverride = !focusOk"
+              >{{ focusOk ? '改判為沒寫對' : '改判為寫對了' }}</button>
+            </div>
+
+            <div class="trace-nav">
+              <button v-if="!focusRevealed" class="primary big disp" @click="focusWriteReveal">對答案</button>
+              <button v-else class="primary big disp" @click="focusWriteNext">下一題 →</button>
+            </div>
+          </template>
+
+          <template v-else>
           <input
             ref="inputEl"
             v-model="input"
@@ -1790,6 +1895,7 @@ const examCountdown = computed(() => {
               <span class="answer-note muted">看了不記分,需再答對一次才出隊</span>
             </span>
           </div>
+          </template>
         </div>
       </section>
 
@@ -2171,6 +2277,9 @@ const examCountdown = computed(() => {
 .gauge-fill.time { background: var(--accent); }
 .gauge.low .gauge-fill.time { background: var(--bad); }
 .chip-tag.chip-test { background: var(--star); }
+.chip-tag.chip-write { background: var(--good); color: var(--panel); }
+.focus-board { max-width: 300px; margin: 0 auto 12px; }
+.focus-panel .trace-head { margin-bottom: 4px; }
 .session-meta.disp .timer { font-size: 16px; color: var(--ink); }
 .session-meta.disp .ok { color: var(--good); }
 .session-meta.disp .ng { color: var(--bad); }
@@ -2271,11 +2380,11 @@ const examCountdown = computed(() => {
 }
 .new-card-note { font-size: 12px; }
 .focus-card[data-state='good'] .kana-face {
-  background: rgba(var(--good-rgb), 0.18);
+  background: linear-gradient(rgba(var(--good-rgb), 0.22), rgba(var(--good-rgb), 0.22)), var(--panel);
   transform: scale(1.04);
 }
 .focus-card[data-state='bad'] .kana-face {
-  background: rgba(var(--bad-rgb), 0.16);
+  background: linear-gradient(rgba(var(--bad-rgb), 0.2), rgba(var(--bad-rgb), 0.2)), var(--panel);
   animation: shake 0.3s;
 }
 .kana-face-wrap .speak-btn {
