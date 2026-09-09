@@ -51,15 +51,6 @@ function startFocus() {
   next_focus_card_or_finish()
 }
 
-function goTestFromFocus() {
-  endFocusSession()
-  focusFinished.value = false
-  isNewCard.value = false
-  current.value = null
-  input.value = ''
-  startTest()
-}
-
 function finishFocus() {
   endFocusSession()
   focusFinished.value = false
@@ -1886,15 +1877,13 @@ const examCountdown = computed(() => {
           </div>
         </div>
         <p v-if="stageReadyToTest && stageInfo.current" class="muted focus-done-note">
-          {{ stageInfo.current.label }} 的字都學過了。去「測驗」把這 {{ stageInfo.current.chars.length }} 個字一次全對,就能解鎖下一關。
+          {{ stageInfo.current.label }} 的字都學過了。隔一段時間再來測驗,一次全對就解鎖下一關 ——
+          剛練完馬上測驗考的是短期記憶,過了也不代表真的記住。
         </p>
         <p v-else class="muted focus-done-note">
           這場練過的字準確率會被推高;下次再開會自動挑當下最弱的 6 張 + 目前關卡的新字。
         </p>
-        <div class="done-actions">
-          <button v-if="stageReadyToTest" class="primary big disp" @click="goTestFromFocus">前往測驗 → 解鎖</button>
-          <button class="btn-ghost big disp" :class="{ primary: !stageReadyToTest }" @click="finishFocus">回到首頁</button>
-        </div>
+        <button class="primary big disp" @click="finishFocus">回到首頁</button>
       </section>
 
     </main>
@@ -2477,8 +2466,6 @@ const examCountdown = computed(() => {
   background: var(--panel);
 }
 .done-num { font-size: 28px; line-height: 1; }
-.done-actions { display: flex; flex-direction: column; gap: 10px; }
-.done-actions .btn-ghost.big { width: 100%; }
 .mode-pill { position: relative; }
 .mode-pill.ready { animation: ready-bounce 1.6s ease-in-out infinite; }
 .mode-badge {
