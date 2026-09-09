@@ -63,7 +63,14 @@ function next_focus_card_or_finish() {
   focusHinted.value = false
   focusBoard.value?.stopDemo()
   focusBoard.value?.clear()
-  if (focusRound.value === 'type') nextTick(() => inputEl.value?.focus())
+  if (focusRound.value === 'type') {
+    nextTick(() => inputEl.value?.focus())
+  } else {
+    // 手寫回合沒有輸入框。焦點狀態不能只靠 focusout ——
+    // 輸入框是被 v-if 移除的,瀏覽器不保證會送出事件,漏掉就會卡在鍵盤版面
+    inputFocused.value = false
+    nextTick(onViewportChange)
+  }
 }
 
 // 看寫法:播一次筆順示範,不記分
@@ -2325,7 +2332,15 @@ const examCountdown = computed(() => {
 .gauge.low .gauge-fill.time { background: var(--bad); }
 .chip-tag.chip-test { background: var(--star); }
 .chip-tag.chip-write { background: var(--good); color: var(--panel); }
-.focus-board { max-width: 300px; margin: 0 auto 12px; }
+/* 手寫格跟著可視高度縮,矮螢幕上主要按鈕才不會被推到畫面外。
+   練習的手寫回合比測驗多一列標籤和コンボ,格子再小一階 */
+.focus-board {
+  width: min(300px, calc(var(--vvh, 100vh) * 0.27));
+  margin: 0 auto 8px;
+}
+.focus-card:has(.focus-board) .combo-row { height: 26px; }
+.focus-card:has(.focus-board) .tag-row { margin-bottom: 8px; }
+.focus-panel .trace-prompt { margin: 0; }
 .focus-panel .trace-head { margin-bottom: 4px; }
 .session-meta.disp .timer { font-size: 16px; color: var(--ink); }
 .session-meta.disp .ok { color: var(--good); }
@@ -3134,7 +3149,11 @@ const examCountdown = computed(() => {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+.trace-wrap .trace-board {
+  width: min(320px, calc(var(--vvh, 100vh) * 0.30));
+  align-self: center;
 }
 .trace-head {
   display: flex;
