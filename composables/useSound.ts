@@ -30,70 +30,64 @@ export interface Track {
 
 const TRACKS: Track[] = [
   {
-    // 定番祭囃子,加速版:陽音階 D,鼓點綿密
-    name: '祭囃子', bpm: 140, loopSteps: 32,
-    don: [0, 4, 6, 8, 12, 14, 16, 20, 22, 24, 28, 30],
-    ka: [2, 10, 18, 26, 27, 31],
-    clap: [8, 24],
-    melody: N('D5 E5 G5 A5 B5 A5 G5 E5 D5 E5 G5 B5 D6 B5 A5 G5'), melodyStep: 2,
-    voice: 'pluck', noteDur: 0.26,
+    // 全套裡最有精神的一首,但鼓點留白,旋律當主角
+    name: '祭囃子', bpm: 116, loopSteps: 32,
+    don: [0, 6, 8, 16, 22, 24],
+    ka: [12, 28, 29],
+    melody: N('D5 E5 G5 A5 G5 - E5 - D5 E5 G5 B5 A5 - G5 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.36,
     bass: [n('D3'), n('D3'), n('A2'), n('A2'), n('G2'), n('G2'), n('A2'), n('D3')],
-    loops: 9,
+    loops: 7,
   },
   {
-    // 花火:最密的十六分音符旋律,一路往上衝
-    name: '花火', bpm: 152, loopSteps: 32,
-    don: [0, 3, 6, 8, 11, 14, 16, 19, 22, 24, 27, 30],
-    ka: [4, 12, 20, 26, 28, 29, 31],
-    clap: [12, 28],
-    melody: N('A4 B4 D5 E5 A5 - E5 D5 B4 D5 E5 F#5 A5 - F#5 E5 D5 E5 F#5 A5 B5 - A5 F#5 E5 D5 B4 A4 B4 D5 E5 -'), melodyStep: 1,
-    voice: 'pluck', noteDur: 0.16,
+    // 花笠:舞步感,輕快但不趕
+    name: '花笠', bpm: 108, loopSteps: 32,
+    don: [0, 8, 16, 24],
+    ka: [3, 11, 19, 27],
+    melody: N('A4 B4 D5 E5 D5 B4 A4 - B4 D5 E5 F#5 E5 D5 B4 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.34,
     bass: [n('A2'), n('A2'), n('E3'), n('E3'), n('D3'), n('D3'), n('E3'), n('A2')],
-    loops: 10,
+    loops: 7,
   },
   {
-    // 神輿:短句反覆像喊聲,每拍都有手拍子
-    name: '神輿', bpm: 146, loopSteps: 32,
-    don: [0, 2, 4, 8, 10, 12, 16, 18, 20, 24, 26, 28],
-    ka: [6, 14, 22, 30, 31],
-    clap: [4, 12, 20, 28],
-    melody: N('D5 D5 A4 D5 G5 G5 E5 G5 A5 A5 G5 E5 D5 - A4 -'), melodyStep: 2,
-    voice: 'pluck', noteDur: 0.2,
-    bass: [n('D3'), n('D3'), n('G2'), n('G2'), n('A2'), n('A2'), n('D3'), n('D3')],
-    loops: 10,
-  },
-  {
-    // 朝日:明亮的 G 大調五聲,鈴聲音色,旋律一路爬升
-    name: '朝日', bpm: 138, loopSteps: 32,
-    don: [0, 6, 8, 14, 16, 22, 24, 30],
-    ka: [4, 12, 20, 26, 28],
-    clap: [8, 24],
-    melody: N('G4 A4 B4 D5 E5 D5 B4 A4 B4 D5 E5 G5 A5 G5 E5 D5'), melodyStep: 2,
-    voice: 'bell', noteDur: 0.4,
+    // 朝日:鈴聲,旋律一路爬升,鼓只在每小節落一下
+    name: '朝日', bpm: 100, loopSteps: 32,
+    don: [0, 16],
+    ka: [8, 24, 26],
+    melody: N('G4 A4 B4 D5 E5 - D5 - B4 D5 E5 G5 A5 - G5 -'), melodyStep: 2,
+    voice: 'bell', noteDur: 0.55,
     bass: [n('G2'), n('G2'), n('D3'), n('D3'), n('E3'), n('E3'), n('C3'), n('D3')],
-    loops: 9,
+    loops: 6,
   },
   {
-    // 風車:最快,旋律像不停打轉
-    name: '風車', bpm: 158, loopSteps: 32,
-    don: [0, 4, 8, 12, 16, 20, 24, 28],
-    ka: [2, 6, 10, 14, 18, 22, 26, 30, 31],
-    clap: [8, 24],
-    melody: N('E5 G5 A5 G5 E5 G5 A5 B5 A5 G5 E5 D5 E5 G5 A5 - B5 A5 G5 A5 B5 D6 B5 A5 G5 E5 D5 E5 G5 A5 B5 -'), melodyStep: 1,
-    voice: 'pluck', noteDur: 0.14,
+    // 風車:八分音符的旋轉音型,平穩
+    name: '風車', bpm: 112, loopSteps: 32,
+    don: [0, 8, 16, 24],
+    ka: [4, 12, 20, 28],
+    melody: N('E5 G5 A5 G5 E5 D5 E5 - G5 A5 B5 A5 G5 E5 D5 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.3,
     bass: [n('E3'), n('E3'), n('A2'), n('A2'), n('D3'), n('D3'), n('A2'), n('E3')],
-    loops: 10,
+    loops: 7,
   },
   {
-    // 豊年:切分節奏,踏著跳的豐收舞
-    name: '豊年', bpm: 134, loopSteps: 32,
-    don: [0, 3, 8, 11, 16, 19, 24, 27],
-    ka: [6, 13, 14, 22, 29, 30, 31],
-    clap: [4, 12, 20, 28],
-    melody: N('C5 D5 E5 G5 A5 G5 E5 D5 C5 E5 G5 A5 C6 A5 G5 E5'), melodyStep: 2,
-    voice: 'pluck', noteDur: 0.28,
+    // 豊年:切分但輕,像踏著走
+    name: '豊年', bpm: 104, loopSteps: 32,
+    don: [0, 11, 16, 27],
+    ka: [6, 22, 30],
+    melody: N('C5 D5 E5 G5 A5 - G5 E5 D5 - E5 G5 A5 - G5 -'), melodyStep: 2,
+    voice: 'pluck', noteDur: 0.4,
     bass: [n('C3'), n('C3'), n('G2'), n('G2'), n('A2'), n('A2'), n('F2'), n('G2')],
-    loops: 9,
+    loops: 7,
+  },
+  {
+    // 小春日:最安靜的一首,篠笛長音
+    name: '小春日', bpm: 96, loopSteps: 32,
+    don: [0, 20],
+    ka: [10, 26],
+    melody: N('C5 D5 E5 - G5 - E5 D5 C5 - A4 C5 D5 - E5 -'), melodyStep: 2,
+    voice: 'flute', noteDur: 0.7,
+    bass: [n('C3'), n('C3'), n('F2'), n('F2'), n('G2'), n('G2'), n('A2'), n('G2')],
+    loops: 6,
   },
 ]
 
@@ -330,9 +324,9 @@ function setTrack(t: Track) {
 function scheduleStep(step: number, at: number) {
   const bus = bgmBus!
   const t = track
-  if (t.don.includes(step)) playDon(at, bus, 0.9)
-  if (t.ka.includes(step)) playKa(at, bus, 0.6)
-  if (t.clap?.includes(step)) playClap(at, bus, 0.7)
+  if (t.don.includes(step)) playDon(at, bus, 0.5)
+  if (t.ka.includes(step)) playKa(at, bus, 0.3)
+  if (t.clap?.includes(step)) playClap(at, bus, 0.45)
   if (step % t.melodyStep === 0) {
     const f = t.melody[(step / t.melodyStep) % t.melody.length]
     if (f) {
