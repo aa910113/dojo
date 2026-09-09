@@ -1,4 +1,13 @@
-import { ALL_KANA, STAGES, type KanaEntry, type KanaScript, type Stage } from '~/data/kana'
+import {
+  ALL_KANA,
+  STAGES,
+  buildStages,
+  LEGACY_PART_ORDER,
+  type KanaEntry,
+  type KanaScript,
+  type Stage,
+  type StageMode,
+} from '~/data/kana'
 
 export interface CardState {
   id: string
@@ -23,6 +32,8 @@ export interface Settings {
   newPerDay: number
   sessionMinutes: number
   autoPlaySound: boolean
+  // 兩種假名都選時的學習順序:separate = 先平假名再片假名;mixed = 同一行一起背
+  stageMode: StageMode
   sfx: boolean
   bgm: boolean
   examDate: string
@@ -72,8 +83,10 @@ export interface PersistShape {
   cards: Record<string, CardState>
   settings: Settings
   daily: Record<string, DailyStats>
-  // 已通過的關卡數。解鎖數 = min(passed + 1, 總關數)
+  // 舊欄位:已通過的關卡數(照「平假名 10 關 → 片假名 10 關」計算),保留給遷移
   passedStages: number
+  // 已通過的「腳本:行序」。用穩定鍵值記錄,切換學習順序後進度不會歸零
+  passedParts: string[]
 }
 
 const DEFAULTS: Settings = {
@@ -81,6 +94,7 @@ const DEFAULTS: Settings = {
   newPerDay: 6,
   sessionMinutes: 15,
   autoPlaySound: true,
+  stageMode: 'separate',
   sfx: true,
   bgm: true,
   examDate: '2026-07-05',
@@ -151,7 +165,7 @@ function freshCard(id: string): CardState {
 
 function loadPersist(): PersistShape {
   if (typeof window === 'undefined') {
-    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
+    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0, passedParts: [] }
   }
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -164,14 +178,15 @@ function loadPersist(): PersistShape {
       cards,
       settings: { ...DEFAULTS, ...(parsed.settings ?? {}) },
       daily: parsed.daily ?? {},
-      passedStages: normalizePassedStages(parsed.passedStages, cards),
+      passedStages: 0,
+      passedParts: normalizePassedParts(parsed.passedParts, parsed.passedStages, cards),
     }
   } catch {
-    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
+    return { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0, passedParts: [] }
   }
 }
 
-// 舊資料沒有 passedStages → 依「已學過的字落在哪一關」推算,
+// 更舊的資料連 passedStages 都沒有 → 依「已學過的字落在哪一關」推算,
 // 讓既有使用者不會被鎖回第一關。
 function inferPassedStages(cards: Record<string, CardState>): number {
   let highest = -1
@@ -182,11 +197,20 @@ function inferPassedStages(cards: Record<string, CardState>): number {
   return Math.max(0, highest)
 }
 
-function normalizePassedStages(raw: unknown, cards: Record<string, CardState>): number {
-  if (typeof raw === 'number' && isFinite(raw)) {
-    return Math.max(0, Math.min(STAGES.length, Math.floor(raw)))
+// 通過紀錄一律換算成 parts;舊的數字欄位照 LEGACY_PART_ORDER 展開
+function normalizePassedParts(
+  rawParts: unknown,
+  rawCount: unknown,
+  cards: Record<string, CardState>,
+): string[] {
+  if (Array.isArray(rawParts)) {
+    const valid = new Set(LEGACY_PART_ORDER)
+    return [...new Set(rawParts.filter((x): x is string => typeof x === 'string' && valid.has(x)))]
   }
-  return inferPassedStages(cards)
+  const n = typeof rawCount === 'number' && isFinite(rawCount)
+    ? Math.max(0, Math.min(LEGACY_PART_ORDER.length, Math.floor(rawCount)))
+    : inferPassedStages(cards)
+  return LEGACY_PART_ORDER.slice(0, n)
 }
 
 function ensureCard(cards: Record<string, CardState>, id: string): CardState {
@@ -266,19 +290,38 @@ export const useSRS = () => {
   }
 
   // === 關卡 ===
+  // 關卡清單跟著「要練哪些假名」與「學習順序」走
+  const stages = computed(() =>
+    buildStages(persist.value.settings.scripts, persist.value.settings.stageMode ?? 'separate'),
+  )
+
+  const passedParts = computed(() => new Set(persist.value.passedParts ?? []))
+
   const stageInfo = computed(() => {
-    const total = STAGES.length
-    const passed = Math.max(0, Math.min(total, persist.value.passedStages ?? 0))
+    const list = stages.value
+    const done = passedParts.value
+    // 只算「從第一關開始連續通過」的數量,切換順序後也不會跳關
+    let passed = 0
+    for (const st of list) {
+      if (st.parts.every((k) => done.has(k))) passed += 1
+      else break
+    }
+    const total = list.length
     const unlocked = Math.min(total, passed + 1)
     const allPassed = passed >= total
-    const current: Stage | null = allPassed ? null : STAGES[unlocked - 1]
+    const current: Stage | null = allPassed ? null : list[unlocked - 1] ?? null
     return { total, passed, unlocked, allPassed, current }
   })
 
   const unlockedCardIds = computed(() => {
     const set = new Set<string>()
+    const list = stages.value
     for (let i = 0; i < stageInfo.value.unlocked; i++) {
-      for (const id of STAGES[i].cardIds) set.add(id)
+      for (const id of list[i]?.cardIds ?? []) set.add(id)
+    }
+    // 已經學過的字永遠保持解鎖:換學習順序時不會把讀過的字收回去
+    for (const [id, c] of Object.entries(persist.value.cards)) {
+      if (c?.introduced) set.add(id)
     }
     return set
   })
@@ -309,10 +352,13 @@ export const useSRS = () => {
     const correct = new Set(correctIds)
     const wrongInStage = stage.cardIds.filter((id) => !correct.has(id))
     const passed = wrongInStage.length === 0
-    const next = passed && stage.index + 1 < STAGES.length ? STAGES[stage.index + 1] : null
+    const list = stages.value
+    const next = passed && stage.index + 1 < list.length ? list[stage.index + 1] : null
     lastStageResult.value = { passed, stage, next, wrongInStage }
     if (passed) {
-      persist.value.passedStages = Math.min(STAGES.length, stage.index + 1)
+      const done = new Set(persist.value.passedParts ?? [])
+      for (const k of stage.parts) done.add(k)
+      persist.value.passedParts = [...done]
       save()
     }
   }
@@ -658,7 +704,7 @@ export const useSRS = () => {
   }
 
   function resetAll() {
-    persist.value = { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0 }
+    persist.value = { cards: {}, settings: { ...DEFAULTS }, daily: {}, passedStages: 0, passedParts: [] }
     lastStageResult.value = null
     save()
   }
@@ -674,7 +720,8 @@ export const useSRS = () => {
       cards,
       settings: { ...DEFAULTS, ...(d.settings ?? {}) },
       daily: (d.daily as Record<string, DailyStats>) ?? {},
-      passedStages: normalizePassedStages(d.passedStages, cards),
+      passedStages: 0,
+      passedParts: normalizePassedParts(d.passedParts, d.passedStages, cards),
     }
     save()
     return true
@@ -968,6 +1015,7 @@ export const useSRS = () => {
     tickDrill,
     endDrillSession,
     effectiveAccuracy,
+    stages,
     stageInfo,
     isUnlocked,
     lastStageResult,

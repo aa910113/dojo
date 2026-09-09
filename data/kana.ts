@@ -146,43 +146,87 @@ export function getKanaById(id: string): KanaEntry | undefined {
 }
 
 // === 關卡(stage) ===
-// 一關 = 一行(わ行與ん合併)。順序:平假名全部 → 片假名全部。
+// 一關 = 一行(わ行與ん合併)。可選兩種順序:
+//   separate = 平假名 10 關 → 片假名 10 關
+//   mixed    = 每關同時包含同一行的平假名與片假名(10 關,每關 10 字)
 // 通過目前關卡的測驗(該關全部一次答對)才解鎖下一關。
+export type StageMode = 'separate' | 'mixed'
+
 export interface Stage {
   index: number
-  script: KanaScript
+  // 組成這一關的「腳本:行序」,是穩定識別碼,切換學習順序後通過紀錄不會歸零
+  parts: string[]
+  script: KanaScript | 'both'
   label: string
   cardIds: string[]
   chars: string[]
+  // 顯示用:每個腳本一行,避免 mixed 模式 10 個字擠成一列
+  charLines: string[][]
 }
 
-const STAGE_ROW_GROUPS: string[][] = [
+export const STAGE_ROW_GROUPS: string[][] = [
   ['a'], ['k'], ['s'], ['t'], ['n'], ['h'], ['m'], ['y'], ['r'], ['w', 'n-special'],
 ]
 
-function buildStages(): Stage[] {
+export const SCRIPT_ORDER: KanaScript[] = ['hiragana', 'katakana']
+
+export function stagePartKey(script: KanaScript, rowIndex: number): string {
+  return `${script}:${rowIndex}`
+}
+
+function rowCards(script: KanaScript, rowGroup: string[]): KanaEntry[] {
+  return ALL_KANA.filter((k) => k.script === script && rowGroup.includes(k.row))
+}
+
+function rowLabel(cards: KanaEntry[], rowGroup: string[]): string {
+  const first = cards[0]
+  return rowGroup.length > 1
+    ? `${first.char}行・${cards[cards.length - 1].char}`
+    : `${first.char}行`
+}
+
+export function buildStages(scripts: KanaScript[], mode: StageMode): Stage[] {
+  const picked = SCRIPT_ORDER.filter((s) => scripts.includes(s))
+  const use = picked.length > 0 ? picked : SCRIPT_ORDER
   const out: Stage[] = []
-  for (const script of ['hiragana', 'katakana'] as KanaScript[]) {
-    for (const rowGroup of STAGE_ROW_GROUPS) {
-      const cards = ALL_KANA.filter((k) => k.script === script && rowGroup.includes(k.row))
-      const first = cards[0]
-      const label = rowGroup.length > 1
-        ? `${first.char}行・${cards[cards.length - 1].char}`
-        : `${first.char}行`
-      out.push({
-        index: out.length,
-        script,
-        label,
-        cardIds: cards.map((k) => k.id),
-        chars: cards.map((k) => k.char),
-      })
-    }
+
+  const push = (parts: string[], script: KanaScript | 'both', label: string, groups: KanaEntry[][]) => {
+    out.push({
+      index: out.length,
+      parts,
+      script,
+      label,
+      cardIds: groups.flat().map((k) => k.id),
+      chars: groups.flat().map((k) => k.char),
+      charLines: groups.map((g) => g.map((k) => k.char)),
+    })
+  }
+
+  if (use.length > 1 && mode === 'mixed') {
+    STAGE_ROW_GROUPS.forEach((rowGroup, r) => {
+      const groups = use.map((sc) => rowCards(sc, rowGroup))
+      push(
+        use.map((sc) => stagePartKey(sc, r)),
+        'both',
+        rowLabel(groups[0], rowGroup),
+        groups,
+      )
+    })
+    return out
+  }
+
+  for (const script of use) {
+    STAGE_ROW_GROUPS.forEach((rowGroup, r) => {
+      const cards = rowCards(script, rowGroup)
+      push([stagePartKey(script, r)], script, rowLabel(cards, rowGroup), [cards])
+    })
   }
   return out
 }
 
-export const STAGES: Stage[] = buildStages()
+// 舊資料的 passedStages(數字)是照這個順序算的
+export const LEGACY_PART_ORDER: string[] = SCRIPT_ORDER.flatMap((sc) =>
+  STAGE_ROW_GROUPS.map((_, r) => stagePartKey(sc, r)),
+)
 
-export function stageOfCard(id: string): Stage | undefined {
-  return STAGES.find((s) => s.cardIds.includes(id))
-}
+export const STAGES: Stage[] = buildStages(SCRIPT_ORDER, 'separate')
