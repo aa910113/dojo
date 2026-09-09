@@ -10,8 +10,11 @@ export interface RawPoint { x: number; y: number }
 
 const REF = STROKE_DATA as unknown as Record<string, Pt[][]>
 const N = 16               // 每筆重新取樣的點數
-const REJECT_DIST = 0.42   // 連最像的字都超過這個距離 → 當作沒認出來
-const ORDER_MAX = 0.13     // 筆順不同但形狀算對的上限
+// 絕對門檻:光看排名不夠 —— 數字、直線這類根本不是假名的東西,
+// 在 46 個候選裡總會有一個「最接近」。門檻由模擬資料訂出:
+// 正常書寫的距離中位數約 0.03-0.05,而各種塗鴉最近也要 0.086 以上。
+const MAX_DIST = 0.08      // 超過就當作沒寫對/認不出來
+const ORDER_MAX = 0.09     // 筆順不同但形狀算對的上限
 
 // 依弧長重新取樣成 N 點
 function resample(pts: Pt[], n = N): Pt[] {
@@ -88,6 +91,10 @@ function assignedDist(user: Pt[][], ref: Pt[][]): number {
 
 export interface RecognizeResult {
   ok: boolean
+  // 診斷用:和目標字的距離、以及最接近的候選字距離(越小越像)
+  dist?: number
+  bestDist?: number
+  bestChar?: string
   // 'ok' 認出目標字 | 'order' 形狀對但筆順不同 | 'strokes' 筆畫數不對
   // 'confused' 比較像別的字 | 'unknown' 認不出來 | 'empty' 沒有筆跡
   reason: 'ok' | 'order' | 'strokes' | 'confused' | 'unknown' | 'empty'
@@ -127,9 +134,12 @@ export function recognizeKana(
   }
 
   const targetOrdered = orderedDist(user, ref)
-  if (bestDist > REJECT_DIST) return { ok: false, reason: 'unknown' }
+  const diag = { dist: +targetOrdered.toFixed(4), bestDist: +bestDist.toFixed(4), bestChar }
 
-  if (bestChar === target) return { ok: true, reason: 'ok' }
+  // 先過絕對門檻:連最接近的候選都差太多 → 這根本不是假名
+  if (bestDist > MAX_DIST) return { ok: false, reason: 'unknown', ...diag }
+
+  if (bestChar === target) return { ok: true, reason: 'ok', ...diag }
 
   // 形狀其實對得上,只是筆順不同 → 算寫對,另外提示筆順。
   // 這條寬容規則必須用絕對門檻:相對門檻在目標本來就不像時也會通過。
@@ -145,8 +155,8 @@ export function recognizeKana(
       const d = assignedDist(user, st)
       if (d < bestA) { bestA = d; bestAChar = ch }
     }
-    if (bestAChar === target) return { ok: true, reason: 'order' }
+    if (bestAChar === target) return { ok: true, reason: 'order', ...diag }
   }
 
-  return { ok: false, reason: 'confused', confusedWith: bestChar }
+  return { ok: false, reason: 'confused', confusedWith: bestChar, ...diag }
 }
