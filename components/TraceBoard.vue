@@ -6,8 +6,23 @@ const props = withDefaults(defineProps<{
   showGuide?: boolean
 }>(), { showGuide: true })
 
+// 筆順示範:把標準筆畫一筆一筆畫出來(資料同辨識器,KanjiVG 衍生)
+const demoStrokes = computed<number[][][]>(
+  () => (STROKE_DATA as Record<string, number[][][]>)[props.char] ?? [],
+)
+// 已畫完的長度比例,0 = 沒在示範
+const demoProgress = ref(0)
+const hasStrokeData = computed(() => demoStrokes.value.length > 0)
+// 範字/示範在格子裡留邊,不要頂到框線(只影響顯示,辨識另外正規化)
+const PAD = 0.12
+const mapX = (v: number) => (PAD + v * (1 - 2 * PAD)) * cssSize
+const mapY = (v: number) => (PAD + v * (1 - 2 * PAD)) * cssSize
+let demoRaf = 0
+
 type Point = { x: number; y: number }
 type Stroke = Point[]
+
+import STROKE_DATA from '~/data/kana-strokes.json'
 
 const wrapEl = ref<HTMLDivElement | null>(null)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -22,6 +37,11 @@ const hasInk = computed(() => strokes.value.length > 0)
 function inkColor(): string {
   if (!wrapEl.value) return '#7dd3fc'
   return getComputedStyle(wrapEl.value).getPropertyValue('--accent-text').trim() || '#4f8db3'
+}
+
+function accentColor(): string {
+  if (!wrapEl.value) return '#9ccbe0'
+  return getComputedStyle(wrapEl.value).getPropertyValue('--good').trim() || '#6cb58d'
 }
 
 function resize() {
@@ -58,11 +78,85 @@ function drawStroke(s: Stroke) {
   ctx.stroke()
 }
 
+// 範字:整個字的標準筆畫,淡淡地墊在底下。
+// 用和辨識器同一份資料,所以顯示的就是它實際比對的形狀
+function drawGuide() {
+  if (!ctx || !props.showGuide) return
+  const list = demoStrokes.value
+  if (list.length === 0) return
+  ctx.save()
+  ctx.strokeStyle = accentColor()
+  ctx.globalAlpha = 0.3
+  ctx.lineWidth = cssSize * 0.05
+  for (const pts of list) {
+    ctx.beginPath()
+    ctx.moveTo(mapX(pts[0][0]), mapY(pts[0][1]))
+    for (let k = 1; k < pts.length; k++) ctx.lineTo(mapX(pts[k][0]), mapY(pts[k][1]))
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+// 筆順示範:一筆一筆畫出來,壓在範字上面
+function drawDemo() {
+  if (!ctx || demoProgress.value <= 0) return
+  const list = demoStrokes.value
+  if (list.length === 0) return
+  const total = list.length
+  const done = demoProgress.value * total
+  ctx.save()
+  ctx.strokeStyle = accentColor()
+  ctx.globalAlpha = 0.75
+  ctx.lineWidth = cssSize * 0.05
+  for (let i = 0; i < total; i++) {
+    const frac = Math.max(0, Math.min(1, done - i))
+    if (frac <= 0) break
+    const pts = list[i]
+    const upto = 1 + Math.floor(frac * (pts.length - 1))
+    ctx.beginPath()
+    ctx.moveTo(mapX(pts[0][0]), mapY(pts[0][1]))
+    for (let k = 1; k < upto; k++) ctx.lineTo(mapX(pts[k][0]), mapY(pts[k][1]))
+    ctx.stroke()
+    // 起筆處點一個圈,標示這一筆從哪開始
+    if (frac < 1) {
+      ctx.beginPath()
+      ctx.arc(mapX(pts[0][0]), mapY(pts[0][1]), cssSize * 0.028, 0, Math.PI * 2)
+      ctx.fillStyle = accentColor()
+      ctx.fill()
+    }
+  }
+  ctx.restore()
+}
+
 function redraw() {
   if (!ctx) return
   ctx.clearRect(0, 0, cssSize, cssSize)
+  drawGuide()
+  drawDemo()
   for (const s of strokes.value) drawStroke(s)
   if (live) drawStroke(live)
+}
+
+// 播放筆順示範:每一筆約 0.5 秒
+function playDemo() {
+  cancelAnimationFrame(demoRaf)
+  const total = demoStrokes.value.length
+  if (total === 0) return
+  const dur = total * 520
+  const t0 = performance.now()
+  const step = (now: number) => {
+    const t = Math.min(1, (now - t0) / dur)
+    demoProgress.value = t
+    redraw()
+    if (t < 1) demoRaf = requestAnimationFrame(step)
+  }
+  demoRaf = requestAnimationFrame(step)
+}
+
+function stopDemo() {
+  cancelAnimationFrame(demoRaf)
+  demoProgress.value = 0
+  redraw()
 }
 
 function toPoint(e: PointerEvent): Point {
@@ -109,7 +203,8 @@ function undo() {
   redraw()
 }
 
-watch(() => props.char, () => clear())
+watch(() => props.char, () => { stopDemo(); clear() })
+watch(() => props.showGuide, () => redraw())
 
 onMounted(() => {
   resize()
@@ -118,11 +213,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  cancelAnimationFrame(demoRaf)
   ro?.disconnect()
 })
 
 // getStrokes 回傳 [0,1] 相對座標的筆跡,給辨識器用
-defineExpose({ clear, undo, hasInk, getStrokes: () => strokes.value })
+defineExpose({ clear, undo, hasInk, getStrokes: () => strokes.value, playDemo, stopDemo })
 </script>
 
 <template>
@@ -132,7 +228,7 @@ defineExpose({ clear, undo, hasInk, getStrokes: () => strokes.value })
       <line x1="50" y1="3" x2="50" y2="97" class="guide-dash" />
       <line x1="3" y1="50" x2="97" y2="50" class="guide-dash" />
       <text
-        v-if="showGuide"
+        v-if="showGuide && !hasStrokeData"
         x="50"
         y="50"
         text-anchor="middle"
