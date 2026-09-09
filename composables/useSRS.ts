@@ -34,6 +34,8 @@ export interface Settings {
   autoPlaySound: boolean
   // 兩種假名都選時的學習順序:separate = 先平假名再片假名;mixed = 同一行一起背
   stageMode: StageMode
+  // 重點練習的出題方式:type = 只打拼音;write = 只手寫;mix = 兩種交錯
+  practiceMode: 'type' | 'write' | 'mix'
   sfx: boolean
   bgm: boolean
   examDate: string
@@ -95,6 +97,7 @@ const DEFAULTS: Settings = {
   sessionMinutes: 15,
   autoPlaySound: true,
   stageMode: 'separate',
+  practiceMode: 'mix',
   sfx: true,
   bgm: true,
   examDate: '2026-07-05',
