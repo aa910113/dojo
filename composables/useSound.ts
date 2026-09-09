@@ -102,6 +102,9 @@ function ensure(): AudioContext | null {
   const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AC) return null
   ctx = new AC()
+  ctx.addEventListener('statechange', () => {
+    if (ctx?.state === 'running') stateBecameRunning?.()
+  })
   master = ctx.createGain()
   master.gain.value = 0.9
   master.connect(ctx.destination)
@@ -307,6 +310,7 @@ function bgmTick() {
 }
 
 let trackChanged: (() => void) | null = null
+let stateBecameRunning: (() => void) | null = null
 let bgmKind: 'home' | 'result' = 'home'
 let playingKind: 'home' | 'result' = 'home'
 
@@ -320,13 +324,29 @@ export const useSound = () => {
   const bgmWanted = useState<boolean>('snd-bgm-wanted', () => false)
   const trackName = useState<string>('snd-track', () => '')
   trackChanged = () => { trackName.value = track.name }
-
-  function unlock() {
-    const c = ensure()
-    if (!c) return
-    if (c.state === 'suspended') c.resume().catch(() => {})
+  stateBecameRunning = () => {
     unlocked.value = true
     if (bgmWanted.value && bgmOn.value && !bgmPlaying.value) startBgm(bgmKind)
+  }
+
+  // 嘗試把 AudioContext 叫醒。回傳是否真的在跑(running)。
+  // 沒有使用者互動時瀏覽器會拒絕,呼叫無害;成功就把想播的 BGM 補播。
+  async function unlock(): Promise<boolean> {
+    const c = ensure()
+    if (!c) return false
+    if (c.state !== 'running') {
+      try {
+        await c.resume()
+      } catch {
+        /* 尚未有使用者互動 */
+      }
+    }
+    const running = c.state === 'running'
+    if (running) {
+      unlocked.value = true
+      if (bgmWanted.value && bgmOn.value && !bgmPlaying.value) startBgm(bgmKind)
+    }
+    return running
   }
 
   function sfx(kind: 'don' | 'ka' | 'fail' | 'clear' | 'fanfare') {

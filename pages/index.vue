@@ -588,10 +588,14 @@ watch(onDoneScreen, (done) => {
   }
 })
 
-function onFirstGesture() {
-  unlockAudio()
-  window.removeEventListener('pointerdown', onFirstGesture)
-  window.removeEventListener('keydown', onFirstGesture)
+// 瀏覽器只承認 touchend / click / pointerup / keydown 這類事件是「使用者互動」,
+// 觸控的 pointerdown 不算,所以要多監聽幾種;真的解鎖成功才拆掉監聽
+const GESTURE_EVENTS = ['pointerup', 'touchend', 'click', 'keydown', 'pointerdown'] as const
+async function onFirstGesture() {
+  const ok = await unlockAudio()
+  if (ok) {
+    for (const ev of GESTURE_EVENTS) window.removeEventListener(ev, onFirstGesture)
+  }
 }
 
 // === 手機軟鍵盤 ===
@@ -617,6 +621,7 @@ function onVisibility() {
   } else {
     if (!sessionStarted.value) startBgm()
     if (studying.value) startStudyTimer()
+    unlockAudio()
   }
 }
 
@@ -829,9 +834,10 @@ let speechKeepAlive: number | null = null
 onMounted(() => {
   loadVoice()
   initCloudSync()
-  window.addEventListener('pointerdown', onFirstGesture)
-  window.addEventListener('keydown', onFirstGesture)
+  for (const ev of GESTURE_EVENTS) window.addEventListener(ev, onFirstGesture, { passive: true })
   document.addEventListener('visibilitychange', onVisibility)
+  // 載入時先試著直接啟動:瀏覽器若放行(常來的網站、同分頁再次進入)就不用等點擊
+  unlockAudio()
   window.visualViewport?.addEventListener('resize', onViewportChange)
   window.visualViewport?.addEventListener('scroll', onViewportChange)
   onViewportChange()
