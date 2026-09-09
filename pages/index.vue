@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { KanaEntry, Stage } from '~/data/kana'
-import { ALL_KANA, STAGES } from '~/data/kana'
+import { ALL_KANA } from '~/data/kana'
 
-const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
+const { settings, stats, updateSettings, review, resetAll, addStudySeconds, getCardState, dailyHistory, deleteDaily, renameDaily, masteryScore, resetSessionLapses, importPersist, focusQueue, focusInitialSize, focusCorrectCount, startFocusSession, pickFocusCard, focusAnswer, endFocusSession, focusProgressFor, testQueue, testTotal, testCorrectIds, testWrongIds, startTestSession, pickTestCard, testAnswer, endTestSession, drillPool, drillSecondsLeft, drillStats, startDrillSession, pickDrillCard, drillAnswer, tickDrill, endDrillSession, effectiveAccuracy, stages, stageInfo, isUnlocked, lastStageResult, evaluateStageUnlock, introduceCard } = useSRS()
 
 const focusFinished = ref(false)
 const focusActive = computed(() => focusQueue.value.length > 0 || focusFinished.value)
@@ -269,7 +269,7 @@ interface StageRow {
 
 const stageRows = computed<StageRow[]>(() => {
   const { passed, unlocked, allPassed } = stageInfo.value
-  return STAGES.map((stage, i) => {
+  return stages.value.map((stage, i) => {
     const status: StageStatus = i < passed ? 'passed' : (!allPassed && i === unlocked - 1) ? 'current' : 'locked'
     let introduced = 0
     let accSum = 0
@@ -291,7 +291,7 @@ const stageRows = computed<StageRow[]>(() => {
       total: stage.cardIds.length,
       accuracy: Math.round(accuracy * 100),
       stars,
-      prevLabel: i > 0 ? STAGES[i - 1].label : '',
+      prevLabel: i > 0 ? stages.value[i - 1].label : '',
     }
   })
 })
@@ -308,12 +308,18 @@ const showAllStages = ref(false)
 // 預設只列到目前關卡 + 後面兩關,其餘摺疊
 const visibleStageRows = computed(() => {
   if (showAllStages.value) return stageRows.value
-  const cut = Math.min(STAGES.length, stageInfo.value.unlocked + 2)
+  const cut = Math.min(stages.value.length, stageInfo.value.unlocked + 2)
   return stageRows.value.slice(0, cut)
 })
 const hiddenStageCount = computed(() => stageRows.value.length - visibleStageRows.value.length)
 
 function scriptName(script: string) {
+  if (script === 'both') return '平假名 + 片假名'
+  return script === 'hiragana' ? '平假名' : '片假名'
+}
+// 鼓面圓圈裡空間有限,用短標示
+function scriptShort(script: string) {
+  if (script === 'both') return '平・片'
   return script === 'hiragana' ? '平假名' : '片假名'
 }
 
@@ -326,7 +332,8 @@ const traceBoard = ref<{ clear: () => void; undo: () => void; hasInk: boolean } 
 
 // 範圍 = 目前關卡的字;全部通關後用最後一關
 const traceCards = computed<KanaEntry[]>(() => {
-  const stage = stageInfo.value.current ?? STAGES[STAGES.length - 1]
+  const list = stages.value
+  const stage = stageInfo.value.current ?? list[list.length - 1]
   return stage.cardIds
     .map((id) => ALL_KANA.find((k) => k.id === id))
     .filter((k): k is KanaEntry => !!k)
@@ -1360,6 +1367,25 @@ const examCountdown = computed(() => {
           </div>
         </div>
         <div class="setting-row">
+          <span class="setting-label">學習順序</span>
+          <div class="toggle-group">
+            <button
+              class="toggle"
+              :class="{ active: settings.stageMode === 'separate' }"
+              @click="updateSettings({ stageMode: 'separate' })"
+            >分開學</button>
+            <button
+              class="toggle"
+              :class="{ active: settings.stageMode === 'mixed' }"
+              @click="updateSettings({ stageMode: 'mixed' })"
+            >一起學</button>
+          </div>
+        </div>
+        <p class="setting-note muted">
+          分開學:平假名 10 關全通過後才開始片假名。一起學:每一關同時練同一行的平假名與片假名。
+          只勾選一種假名時沒有差別。
+        </p>
+        <div class="setting-row">
           <span class="setting-label">每日新字</span>
           <input
             type="number"
@@ -1436,11 +1462,15 @@ const examCountdown = computed(() => {
       <section v-if="!sessionStarted" class="hero-taiko">
         <div class="drum-wrap">
           <div class="drum">
-            <div class="drum-face">
+            <div class="drum-face" :class="{ 'two-lines': (stageInfo.current?.charLines.length ?? 1) > 1 }">
               <template v-if="stageInfo.current">
-                <div class="drum-sub">第 {{ stageInfo.unlocked }} 關 · {{ scriptName(stageInfo.current.script) }}</div>
+                <div class="drum-sub">第 {{ stageInfo.unlocked }} 關 · {{ scriptShort(stageInfo.current.script) }}</div>
                 <div class="drum-label disp">{{ stageInfo.current.label }}</div>
-                <div class="drum-chars disp">{{ stageInfo.current.chars.join('') }}</div>
+                <div
+                  v-for="(line, li) in stageInfo.current.charLines"
+                  :key="li"
+                  class="drum-chars disp"
+                >{{ line.join('') }}</div>
               </template>
               <template v-else>
                 <div class="drum-sub">{{ stageInfo.total }} / {{ stageInfo.total }} 關</div>
@@ -1497,7 +1527,9 @@ const examCountdown = computed(() => {
           >
             <div class="stage-tab disp">{{ row.stage.chars[0] }}</div>
             <div class="stage-body">
-              <div class="stage-row-chars disp">{{ row.stage.chars.join('') }}</div>
+              <div class="stage-row-chars disp" :class="{ two: row.stage.charLines.length > 1 }">
+                <span v-for="(line, li) in row.stage.charLines" :key="li">{{ line.join('') }}</span>
+              </div>
               <div v-if="row.status === 'passed'" class="stage-row-status">クリア！ 準確率 {{ row.accuracy }}%</div>
               <div v-else-if="row.status === 'current' && row.introduced >= row.total" class="stage-row-status">已學 {{ row.total }} / {{ row.total }} · 測驗全對即解鎖下一關</div>
               <div v-else-if="row.status === 'current'" class="stage-row-status">挑戰中 · 已學 {{ row.introduced }} / {{ row.total }}</div>
@@ -3168,12 +3200,23 @@ const examCountdown = computed(() => {
   line-height: 1.05;
   color: var(--ink);
 }
+.stage-row-chars { display: flex; gap: 12px; flex-wrap: wrap; }
+.stage-row-chars.two { font-size: 14px; letter-spacing: 0.12em; }
+.setting-note {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: -6px 0 14px;
+}
 .drum-chars {
   font-size: 16px;
   letter-spacing: 0.3em;
   padding-left: 0.3em;
   color: var(--bad);
+  line-height: 1.35;
 }
+/* 一起學:圓圈裡要放兩行假名,字級縮一階 */
+.drum-face.two-lines .drum-label { font-size: 42px; }
+.drum-face.two-lines .drum-chars { font-size: 14px; letter-spacing: 0.2em; padding-left: 0.2em; }
 .drum-badges {
   display: flex;
   gap: 8px;
