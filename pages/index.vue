@@ -21,7 +21,11 @@ const focusBoard = ref<{
   undo: () => void
   hasInk: boolean
   getStrokes: () => { x: number; y: number }[][]
+  playDemo: () => void
+  stopDemo: () => void
 } | null>(null)
+// 練習時看過寫法就不記分,得再寫對一次才出隊(和打字的「看答案」一致)
+const focusHinted = ref(false)
 const focusRevealed = ref(false)
 const focusVerdict = ref<RecognizeResult | null>(null)
 const focusOverride = ref<boolean | null>(null)
@@ -56,8 +60,26 @@ function next_focus_card_or_finish() {
   focusRevealed.value = false
   focusVerdict.value = null
   focusOverride.value = null
+  focusHinted.value = false
+  focusBoard.value?.stopDemo()
   focusBoard.value?.clear()
   if (focusRound.value === 'type') nextTick(() => inputEl.value?.focus())
+}
+
+// 看寫法:播一次筆順示範,不記分
+function focusShowStrokes() {
+  sfx('ka')
+  focusHinted.value = true
+  if (settings.value.autoPlaySound && current.value) speakKana(current.value.char)
+  nextTick(() => focusBoard.value?.playDemo())
+}
+
+// 看過寫法後就不判定,直接送回隊尾再練
+function focusHintedNext() {
+  const card = current.value
+  if (!card) return
+  focusAnswer(card.id, false)
+  next_focus_card_or_finish()
 }
 
 // 手寫回合:辨識是客觀判定,所以和打字一樣計入間隔重複
@@ -269,6 +291,8 @@ const traceBoard = ref<{
   undo: () => void
   hasInk: boolean
   getStrokes: () => { x: number; y: number }[][]
+  playDemo: () => void
+  stopDemo: () => void
 } | null>(null)
 const writeQueue = ref<string[]>([])
 const writeTotal = ref(0)
@@ -381,6 +405,7 @@ function writeNext() {
   writeRevealed.value = false
   writeVerdict.value = null
   writeOverride.value = null
+  traceBoard.value?.stopDemo()
   traceBoard.value?.clear()
   if (writeQueue.value.length === 0) {
     writeFinished.value = true
@@ -1604,6 +1629,11 @@ const examCountdown = computed(() => {
           <div class="trace-tools">
             <button class="btn-ghost arcade small" @click="traceBoard?.undo()">上一筆</button>
             <button class="btn-ghost arcade small" @click="traceBoard?.clear()">清除</button>
+            <button
+              v-if="writeRevealed"
+              class="btn-ghost arcade small"
+              @click="traceBoard?.playDemo()"
+            >看筆順</button>
           </div>
 
           <div v-if="!writeRevealed" class="trace-nav">
@@ -1845,15 +1875,21 @@ const examCountdown = computed(() => {
               <span class="verdict-mark disp">{{ focusOk ? '✓' : '✗' }}</span>
               <span>{{ focusOverride === null ? focusVerdictText : (focusOk ? '已改判為寫對' : '已改判為沒寫對') }}</span>
             </div>
+            <p v-else-if="focusHinted" class="trace-prompt">照著筆順描一次,這題不記分</p>
             <p v-else class="trace-prompt">寫出這個音的假名</p>
 
             <div class="focus-board">
-              <TraceBoard ref="focusBoard" :char="current.char" :show-guide="focusRevealed" />
+              <TraceBoard ref="focusBoard" :char="current.char" :show-guide="focusRevealed || focusHinted" />
             </div>
 
             <div class="trace-tools">
               <button class="btn-ghost arcade small" @click="focusBoard?.undo()">上一筆</button>
               <button class="btn-ghost arcade small" @click="focusBoard?.clear()">清除</button>
+              <button
+                v-if="focusHinted || focusRevealed"
+                class="btn-ghost arcade small"
+                @click="focusBoard?.playDemo()"
+              >再看一次筆順</button>
               <button
                 v-if="focusRevealed"
                 class="btn-ghost arcade small"
@@ -1862,9 +1898,20 @@ const examCountdown = computed(() => {
             </div>
 
             <div class="trace-nav">
-              <button v-if="!focusRevealed" class="primary big disp" @click="focusWriteReveal">對答案</button>
-              <button v-else class="primary big disp" @click="focusWriteNext">下一題 →</button>
+              <template v-if="focusRevealed">
+                <button class="primary big disp" @click="focusWriteNext">下一題 →</button>
+              </template>
+              <template v-else-if="focusHinted">
+                <button class="primary big disp" @click="focusHintedNext">下一題 →</button>
+              </template>
+              <template v-else>
+                <button class="btn-ghost arcade big disp" @click="focusShowStrokes">不會(看寫法)</button>
+                <button class="primary big disp" @click="focusWriteReveal">對答案</button>
+              </template>
             </div>
+            <p v-if="focusHinted && !focusRevealed" class="hint-row">
+              <span class="answer-note muted">看了不記分,需再寫對一次才出隊</span>
+            </p>
           </template>
 
           <template v-else>
@@ -3150,6 +3197,7 @@ const examCountdown = computed(() => {
   gap: 10px;
 }
 .trace-nav > button { flex: 1; }
+.btn-ghost.arcade.big { padding: 14px 10px; font-size: 15px; border-radius: 14px; box-shadow: 0 4px 0 var(--ink); }
 .trace-note { font-size: 12px; line-height: 1.6; text-align: center; margin: 0; }
 .stage-result.fail {
   color: var(--bad);
