@@ -323,11 +323,12 @@ function scriptShort(script: string) {
   return script === 'hiragana' ? '平假名' : '片假名'
 }
 
-// === 手寫描紅 ===
+// === 手寫(看羅馬字寫假名)===
 // 虛線田字格 + 淡色範字,用手指 / 筆描;不辨識、不記分,純練字形
 const traceActive = ref(false)
 const traceIndex = ref(0)
-const traceShowGuide = ref(true)
+// 答案(正確字形)預設藏起來:先憑記憶寫,寫完才疊上來對照
+const traceShowGuide = ref(false)
 const traceBoard = ref<{ clear: () => void; undo: () => void; hasInk: boolean } | null>(null)
 
 // 範圍 = 目前關卡的字;全部通關後用最後一關
@@ -343,7 +344,7 @@ const traceCard = computed<KanaEntry | null>(() => traceCards.value[traceIndex.v
 function startTrace() {
   sfx('ka')
   traceIndex.value = 0
-  traceShowGuide.value = true
+  traceShowGuide.value = false
   traceActive.value = true
   sessionStarted.value = true
 }
@@ -358,11 +359,21 @@ function traceGo(delta: number) {
   if (n === 0) return
   sfx('ka')
   traceIndex.value = (traceIndex.value + delta + n) % n
+  traceShowGuide.value = false
 }
 
 function traceJump(i: number) {
   traceIndex.value = i
+  traceShowGuide.value = false
 }
+
+function traceReveal() {
+  sfx('ka')
+  traceShowGuide.value = !traceShowGuide.value
+}
+
+// 一起學模式下同一行的平假名與片假名羅馬字相同,chip 要標示是哪一種
+const traceHasBothScripts = computed(() => new Set(traceCards.value.map((k) => k.script)).size > 1)
 
 function playTrace() {
   if (traceCard.value) speakKana(traceCard.value.char)
@@ -518,7 +529,7 @@ watch(sessionStarted, (started) => {
 const onDoneScreen = computed(() => focusFinished.value || testFinished.value || drillFinished.value)
 
 // === 練習計時 ===
-// 在任何模式裡(重點 / 測驗 / 衝刺 / 描紅)每秒累加,結果畫面與分頁切到背景時暫停;
+// 在任何模式裡(重點 / 測驗 / 衝刺 / 手寫)每秒累加,結果畫面與分頁切到背景時暫停;
 // 每 10 秒寫進今日統計一次,結束時把剩餘的補上
 const studying = computed(() => sessionStarted.value && !onDoneScreen.value)
 const sessionSeconds = ref(0)
@@ -1508,8 +1519,8 @@ const examCountdown = computed(() => {
             <span class="mode-zh">衝刺</span>
           </button>
           <button class="mode-pill mode-trace" @click="startTrace">
-            <span class="mode-jp disp">れんしゅう</span>
-            <span class="mode-zh">描紅</span>
+            <span class="mode-jp disp">かきとり</span>
+            <span class="mode-zh">手寫</span>
           </button>
         </div>
 
@@ -1554,11 +1565,11 @@ const examCountdown = computed(() => {
 
       <section v-else-if="traceActive" class="panel session trace-panel">
         <div class="session-bar">
-          <div class="quiz-title">手寫描紅</div>
-          <div class="session-meta">
-            <span class="muted">{{ traceIndex + 1 }} / {{ traceCards.length }}</span>
+          <div class="quiz-title disp">手寫</div>
+          <div class="session-meta disp">
+            <span>{{ traceIndex + 1 }} / {{ traceCards.length }}</span>
           </div>
-          <button class="btn-ghost" @click="finishTrace">結束</button>
+          <button class="btn-ghost arcade" @click="finishTrace">結束</button>
         </div>
         <div class="trace-chips">
           <button
@@ -1567,30 +1578,36 @@ const examCountdown = computed(() => {
             class="trace-chip"
             :class="{ active: i === traceIndex }"
             @click="traceJump(i)"
-          >{{ k.char }}</button>
+          >
+            <span>{{ k.romaji }}</span>
+            <span v-if="traceHasBothScripts" class="chip-scr">{{ k.script === 'hiragana' ? '平' : '片' }}</span>
+          </button>
         </div>
         <div v-if="traceCard" class="trace-wrap">
           <div class="trace-head">
-            <span class="script-tag">{{ traceCard.script === 'hiragana' ? '平假名' : '片假名' }}</span>
-            <span class="trace-romaji">{{ traceCard.romaji }}</span>
-            <button v-if="ttsSupported" class="speak-btn" title="播放讀音" @click="playTrace">🔊</button>
+            <span class="chip-tag">{{ traceCard.script === 'hiragana' ? '平假名' : '片假名' }}</span>
+            <span class="trace-romaji disp">{{ traceCard.romaji }}</span>
+            <button v-if="ttsSupported" class="speak-btn arcade" title="播放讀音" @click="playTrace">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
+            </button>
           </div>
+          <p class="trace-prompt">寫出這個音的假名</p>
           <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="traceShowGuide" />
           <div class="trace-tools">
             <button
               class="toggle"
               :class="{ active: traceShowGuide }"
-              @click="traceShowGuide = !traceShowGuide"
-            >{{ traceShowGuide ? '範字:開' : '範字:關' }}</button>
-            <button class="btn-ghost small" @click="traceBoard?.undo()">上一筆</button>
-            <button class="btn-ghost small" @click="traceBoard?.clear()">清除</button>
+              @click="traceReveal"
+            >{{ traceShowGuide ? '答案:開' : '對答案' }}</button>
+            <button class="btn-ghost arcade small" @click="traceBoard?.undo()">上一筆</button>
+            <button class="btn-ghost arcade small" @click="traceBoard?.clear()">清除</button>
           </div>
           <div class="trace-nav">
-            <button class="btn-ghost big" @click="traceGo(-1)">← 上一個</button>
-            <button class="primary big" @click="traceGo(1)">下一個 →</button>
+            <button class="btn-ghost big disp" @click="traceGo(-1)">← 上一個</button>
+            <button class="primary big disp" @click="traceGo(1)">下一個 →</button>
           </div>
           <p class="muted trace-note">
-            先開著範字描幾次,關掉範字再憑記憶寫一次,對照虛線格的位置檢查字形。
+            憑記憶寫,寫完按「對答案」把正確字形疊上來比對。完全沒印象就先開著答案描幾次。
           </p>
         </div>
       </section>
@@ -2326,6 +2343,9 @@ const examCountdown = computed(() => {
 }
 .panel.session > * { position: relative; }
 .panel.session .gauge { background: var(--panel); }
+/* 手寫沒有量表,頭帶只蓋住標題列,chip 排在帶子下面 */
+.panel.session.trace-panel::before { height: 78px; }
+.trace-panel .session-meta.disp { color: var(--ink); opacity: 0.7; }
 .drill-panel .session-meta.disp .timer { color: var(--panel); }
 .drill-panel .quiz-title,
 .drill-panel .session-meta.disp { color: var(--panel); }
@@ -3117,11 +3137,18 @@ const examCountdown = computed(() => {
   gap: 10px;
 }
 .trace-romaji {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--accent-text);
-  letter-spacing: 0.08em;
+  font-size: 40px;
+  color: var(--ink);
+  letter-spacing: 0.1em;
+  line-height: 1;
 }
+.trace-prompt {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin: -4px 0 0;
+}
+.chip-scr { font-size: 10px; opacity: 0.6; margin-left: 3px; }
 .trace-tools {
   display: flex;
   justify-content: center;
