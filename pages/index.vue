@@ -599,20 +599,53 @@ async function onFirstGesture() {
 }
 
 // === 手機軟鍵盤 ===
-// 鍵盤彈出時 visualViewport 變矮;切成緊湊版面塞進可見區,並把頁面釘住不被推上去
+// 鍵盤彈出 → 切成緊湊版面塞進可見區,並把頁面釘住不被推上去。
+// 不能用 vv.height / window.innerHeight 比較:viewport-fit 的 interactive-widget 會讓兩者
+// 一起縮小,比例永遠不變。改成記住「沒有鍵盤時的可視高度」當基準,再看有沒有明顯變矮。
 const kbOpen = ref(false)
+const inputFocused = ref(false)
+const KB_MIN_DROP = 100
+let baseViewportH = 0
+
 function onViewportChange() {
   const vv = window.visualViewport
   if (!vv) return
-  document.documentElement.style.setProperty('--vvh', `${Math.round(vv.height)}px`)
-  const open = sessionStarted.value && vv.height < window.innerHeight * 0.82
-  kbOpen.value = open
+  const h = Math.round(vv.height)
+  document.documentElement.style.setProperty('--vvh', `${h}px`)
+  // 輸入框沒有 focus 時的高度才拿來當基準
+  if (!inputFocused.value) baseViewportH = Math.max(baseViewportH, h)
+  const shrunk = baseViewportH > 0 && h < baseViewportH - KB_MIN_DROP
+  const open = sessionStarted.value && inputFocused.value && shrunk
+  if (open !== kbOpen.value) kbOpen.value = open
   if (open) {
-    // iOS 會把整頁往上捲來露出輸入框;版面已經縮到可見區內,捲回頂端即可
+    // iOS 仍可能把整頁往上捲來露出輸入框;版面已經縮進可視區,捲回頂端即可
     window.scrollTo(0, 0)
   }
 }
-watch(sessionStarted, () => nextTick(onViewportChange))
+
+function onFocusIn(e: FocusEvent) {
+  const el = e.target as HTMLElement | null
+  if (el?.classList.contains('answer-input')) {
+    inputFocused.value = true
+    // 鍵盤動畫需要時間,多量幾次
+    for (const d of [0, 60, 180, 350, 600]) setTimeout(onViewportChange, d)
+  }
+}
+function onFocusOut(e: FocusEvent) {
+  const el = e.target as HTMLElement | null
+  if (el?.classList.contains('answer-input')) {
+    inputFocused.value = false
+    for (const d of [0, 120, 350]) setTimeout(onViewportChange, d)
+  }
+}
+
+watch(sessionStarted, (started) => {
+  if (!started) {
+    inputFocused.value = false
+    kbOpen.value = false
+  }
+  nextTick(onViewportChange)
+})
 
 function onVisibility() {
   if (document.visibilityState === 'hidden') {
@@ -840,6 +873,8 @@ onMounted(() => {
   unlockAudio()
   window.visualViewport?.addEventListener('resize', onViewportChange)
   window.visualViewport?.addEventListener('scroll', onViewportChange)
+  document.addEventListener('focusin', onFocusIn)
+  document.addEventListener('focusout', onFocusOut)
   onViewportChange()
   // 請求持久化儲存,降低 iOS/瀏覽器在空間吃緊時清掉 localStorage 的機率
   navigator.storage?.persist?.().catch(() => {})
@@ -860,6 +895,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibility)
   window.visualViewport?.removeEventListener('resize', onViewportChange)
   window.visualViewport?.removeEventListener('scroll', onViewportChange)
+  document.removeEventListener('focusin', onFocusIn)
+  document.removeEventListener('focusout', onFocusOut)
   stopStudyTimer()
   stopBgm()
 })
@@ -1878,12 +1915,14 @@ const examCountdown = computed(() => {
 }
 
 /* ===== 軟鍵盤開啟時的緊湊版面 ===== */
+/* 鼓面大小跟著可視高度走,鍵盤把畫面壓到很矮時也塞得下 */
 .page.in-session.kb-open {
+  --drum: min(168px, calc(var(--vvh, 500px) * 0.36));
   position: fixed;
   inset: 0;
   height: var(--vvh, 100%);
   overflow-y: auto;
-  padding: 8px 14px 12px;
+  padding: 6px 14px 10px;
 }
 .page.in-session.kb-open .topbar { display: none; }
 .page.in-session.kb-open .panel.session {
@@ -1893,24 +1932,30 @@ const examCountdown = computed(() => {
   box-shadow: none;
   background: transparent;
 }
-.page.in-session.kb-open .session-bar { margin-bottom: 10px; }
+.page.in-session.kb-open .session-bar { margin-bottom: 8px; }
+.page.in-session.kb-open .quiz-title.disp { font-size: 16px; }
+.page.in-session.kb-open .btn-ghost.arcade { padding: 6px 12px; font-size: 13px; }
 .page.in-session.kb-open .gauge { margin: 0 0 4px; padding: 3px; }
 .page.in-session.kb-open .gauge-cell,
 .page.in-session.kb-open .gauge-bar { height: 8px; }
 .page.in-session.kb-open .combo-row { height: 24px; }
 .page.in-session.kb-open .card { padding: 4px 0; }
 .page.in-session.kb-open .panel.session::before { display: none; }
-.page.in-session.kb-open .kana-face-wrap { width: 150px; height: 150px; margin: 0 auto 8px; }
+.page.in-session.kb-open .kana-face-wrap {
+  width: var(--drum);
+  height: var(--drum);
+  margin: 0 auto 6px;
+}
 .page.in-session.kb-open .kana-face-wrap::before { box-shadow: 0 4px 0 var(--ink); }
-.page.in-session.kb-open .kana-face { inset: 12px; }
+.page.in-session.kb-open .kana-face { inset: calc(var(--drum) * 0.09); }
 .page.in-session.kb-open .drill-panel .quiz-title,
 .page.in-session.kb-open .drill-panel .session-meta.disp,
 .page.in-session.kb-open .drill-panel .session-meta.disp .timer { color: var(--ink); }
-.page.in-session.kb-open .kana-face .kana { font-size: 84px; }
-.page.in-session.kb-open .kana-face.with-reading .kana { font-size: 70px; }
-.page.in-session.kb-open .kana-reading { font-size: 18px; }
+.page.in-session.kb-open .kana-face .kana { font-size: calc(var(--drum) * 0.60); }
+.page.in-session.kb-open .kana-face.with-reading .kana { font-size: calc(var(--drum) * 0.50); }
+.page.in-session.kb-open .kana-reading { font-size: calc(var(--drum) * 0.14); margin-top: 0; }
 .page.in-session.kb-open .new-card-note { display: none; }
-.page.in-session.kb-open .kana-face-wrap .speak-btn { width: 40px; height: 40px; right: -6px; bottom: -2px; }
+.page.in-session.kb-open .kana-face-wrap .speak-btn { width: 38px; height: 38px; right: -8px; bottom: -2px; }
 .page.in-session.kb-open .kana { font-size: 96px; margin: 0; }
 .page.in-session.kb-open .tag-row { margin-bottom: 8px; }
 .page.in-session.kb-open .learn-hint { padding: 6px 12px; margin: 0 auto 8px; gap: 0; box-shadow: none; }
