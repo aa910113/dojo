@@ -1221,8 +1221,11 @@ const examCountdown = computed(() => {
     <Confetti v-if="onDoneScreen" :key="doneKey" :intensity="celebrationIntensity" />
     <header class="topbar">
       <div class="brand">
-        <span class="brand-main disp">五十音道場</span>
-        <span class="brand-sub">ゴジュウオン・ドウジョウ</span>
+        <img class="brand-logo" src="/logo.svg" alt="" width="40" height="40" />
+        <div class="brand-text">
+          <span class="brand-main disp">五十音道場</span>
+          <span class="brand-sub">ゴジュウオン・ドウジョウ</span>
+        </div>
       </div>
       <div class="topbar-stats">
         <button
@@ -2211,21 +2214,39 @@ const examCountdown = computed(() => {
 }
 .brand {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 0 rgba(var(--ink-rgb), 0.2));
+}
+.brand-text {
+  display: flex;
   flex-direction: column;
   gap: 2px;
 }
 .brand-main {
-  font-size: 24px;
-  letter-spacing: 0.08em;
+  font-size: 21px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
   paint-order: stroke fill;
   -webkit-text-stroke: 5px var(--panel);
   text-shadow: 0 3px 0 rgba(var(--ink-rgb), 0.18);
 }
 .brand-sub {
   font-size: 10px;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.2em;
   color: var(--accent-text);
   font-weight: 700;
+  white-space: nowrap;
+}
+/* 窄螢幕放不下三顆按鈕加副標,副標是裝飾性的,先收起來 */
+@media (max-width: 430px) {
+  .brand-sub { display: none; }
 }
 .topbar-stats {
   display: flex;
