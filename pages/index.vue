@@ -319,6 +319,8 @@ function verdictText(r: RecognizeResult | null): string {
     case 'ok': return '辨識正確'
     case 'order': return '字形正確,但筆順和標準不同'
     case 'strokes': return `筆畫數不對 — 這個字 ${r.expectedStrokes} 畫,你寫了 ${r.gotStrokes} 畫`
+    case 'straight': return '筆畫太直了 — 這個字有彎的地方'
+    case 'shape': return '整體形狀和這個字差太多'
     case 'confused': return `比較像「${r.confusedWith}」`
     case 'empty': return '還沒寫'
     default: return '認不出來'
