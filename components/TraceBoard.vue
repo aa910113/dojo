@@ -1,28 +1,20 @@
 <script setup lang="ts">
-// 描紅板:虛線田字格 + 淡色範字(SVG 文字)+ 可手寫的 canvas 疊層
-// 筆跡用 0~1 的相對座標存,換尺寸 / 轉向時重畫不變形
+// 描寫板:虛線田字格 + 可手寫的 canvas。
+// 範字與筆順示範直接畫 KanjiVG 的原始曲線,保留每個假名在 109 字身框裡的
+// 自然大小與位置 —— 若把每個字各自縮放到填滿格子,小字會被放大而顯得不工整。
+// 筆跡用 0~1 的相對座標存,換尺寸 / 轉向時重畫不變形。
+import STROKE_DATA from '~/data/kana-strokes.json'
+
 const props = withDefaults(defineProps<{
   char: string
   showGuide?: boolean
 }>(), { showGuide: true })
 
-// 筆順示範:把標準筆畫一筆一筆畫出來(資料同辨識器,KanjiVG 衍生)
-const demoStrokes = computed<number[][][]>(
-  () => (STROKE_DATA as Record<string, number[][][]>)[props.char] ?? [],
-)
-// 已畫完的長度比例,0 = 沒在示範
-const demoProgress = ref(0)
-const hasStrokeData = computed(() => demoStrokes.value.length > 0)
-// 範字/示範在格子裡留邊,不要頂到框線(只影響顯示,辨識另外正規化)
-const PAD = 0.12
-const mapX = (v: number) => (PAD + v * (1 - 2 * PAD)) * cssSize
-const mapY = (v: number) => (PAD + v * (1 - 2 * PAD)) * cssSize
-let demoRaf = 0
-
 type Point = { x: number; y: number }
 type Stroke = Point[]
+interface CharData { p: string[]; s: number[][][] }
 
-import STROKE_DATA from '~/data/kana-strokes.json'
+const VIEW = 109 // KanjiVG 的字身框
 
 const wrapEl = ref<HTMLDivElement | null>(null)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -33,14 +25,51 @@ let cssSize = 0
 let ro: ResizeObserver | null = null
 
 const hasInk = computed(() => strokes.value.length > 0)
+const charData = computed<CharData | null>(
+  () => (STROKE_DATA as Record<string, CharData>)[props.char] ?? null,
+)
+const hasStrokeData = computed(() => (charData.value?.p.length ?? 0) > 0)
+
+// === 範字 / 筆順示範 ===
+// 量路徑長度要靠 SVG,建一個隱藏的 path 重複使用
+let measurer: SVGPathElement | null = null
+function measure(d: string) {
+  if (typeof document === 'undefined') return { len: 0, start: null as DOMPoint | null }
+  if (!measurer) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('width', '0')
+    svg.setAttribute('height', '0')
+    svg.setAttribute('style', 'position:absolute;left:-9999px;top:0;overflow:hidden')
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    svg.appendChild(path)
+    document.body.appendChild(svg)
+    measurer = path
+  }
+  measurer.setAttribute('d', d)
+  const len = measurer.getTotalLength()
+  return { len, start: len > 0 ? measurer.getPointAtLength(0) : null }
+}
+
+interface StrokeShape { path: Path2D; len: number; start: DOMPoint | null }
+const shapes = computed<StrokeShape[]>(() => {
+  if (typeof window === 'undefined') return []
+  return (charData.value?.p ?? []).map((d) => {
+    const m = measure(d)
+    return { path: new Path2D(d), len: m.len, start: m.start }
+  })
+})
+
+// 已畫完的比例,0 = 沒在示範
+const demoProgress = ref(0)
+let demoRaf = 0
 
 function inkColor(): string {
-  if (!wrapEl.value) return '#7dd3fc'
+  if (!wrapEl.value) return '#4f8db3'
   return getComputedStyle(wrapEl.value).getPropertyValue('--accent-text').trim() || '#4f8db3'
 }
 
-function accentColor(): string {
-  if (!wrapEl.value) return '#9ccbe0'
+function guideColor(): string {
+  if (!wrapEl.value) return '#6cb58d'
   return getComputedStyle(wrapEl.value).getPropertyValue('--good').trim() || '#6cb58d'
 }
 
@@ -72,9 +101,10 @@ function tracePath(pts: Array<[number, number]>) {
     return
   }
   for (let i = 1; i < pts.length - 1; i++) {
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2
-    const my = (pts[i][1] + pts[i + 1][1]) / 2
-    ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my)
+    ctx.quadraticCurveTo(
+      pts[i][0], pts[i][1],
+      (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2,
+    )
   }
   const last = pts[pts.length - 1]
   ctx.lineTo(last[0], last[1])
@@ -89,62 +119,56 @@ function drawStroke(s: Stroke) {
   ctx.stroke()
 }
 
-// 範字:整個字的標準筆畫,淡淡地墊在底下。
-// 用和辨識器同一份資料,所以顯示的就是它實際比對的形狀
-function drawGuide() {
-  if (!ctx || !props.showGuide) return
-  const list = demoStrokes.value
-  if (list.length === 0) return
+// 把 109 的字身框對應到 canvas,線寬換算回該座標系
+function withCharTransform(px: number, draw: (c: CanvasRenderingContext2D) => void) {
+  if (!ctx) return
+  const k = cssSize / VIEW
   ctx.save()
-  ctx.strokeStyle = accentColor()
-  ctx.globalAlpha = 0.3
-  ctx.lineWidth = cssSize * 0.04
-  for (const pts of list) {
-    ctx.beginPath()
-    tracePath(pts.map(([x, y]) => [mapX(x), mapY(y)]))
-    ctx.stroke()
-  }
+  ctx.scale(k, k)
+  ctx.lineWidth = px / k
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  draw(ctx)
   ctx.restore()
 }
 
-// 筆順示範:一筆一筆畫出來,壓在範字上面
+function drawGuide() {
+  if (!ctx || !props.showGuide) return
+  const list = shapes.value
+  if (list.length === 0) return
+  withCharTransform(cssSize * 0.04, (c) => {
+    c.strokeStyle = guideColor()
+    c.globalAlpha = 0.3
+    for (const sh of list) c.stroke(sh.path)
+  })
+}
+
 function drawDemo() {
   if (!ctx || demoProgress.value <= 0) return
-  const list = demoStrokes.value
+  const list = shapes.value
   if (list.length === 0) return
   const total = list.length
   const done = demoProgress.value * total
-  ctx.save()
-  ctx.strokeStyle = accentColor()
-  ctx.globalAlpha = 0.75
-  ctx.lineWidth = cssSize * 0.04
-  for (let i = 0; i < total; i++) {
-    const frac = Math.max(0, Math.min(1, done - i))
-    if (frac <= 0) break
-    const pts = list[i]
-    // 連續推進:整數點之外再補上最後一段的內插,動畫才不會一格一格跳
-    const exact = frac * (pts.length - 1)
-    const whole = Math.floor(exact)
-    const partial = exact - whole
-    const drawn: Array<[number, number]> = []
-    for (let k = 0; k <= whole && k < pts.length; k++) drawn.push([mapX(pts[k][0]), mapY(pts[k][1])])
-    if (partial > 0 && whole + 1 < pts.length) {
-      const a = pts[whole]
-      const b = pts[whole + 1]
-      drawn.push([mapX(a[0] + (b[0] - a[0]) * partial), mapY(a[1] + (b[1] - a[1]) * partial)])
+  withCharTransform(cssSize * 0.04, (c) => {
+    c.strokeStyle = guideColor()
+    c.globalAlpha = 0.8
+    for (let i = 0; i < total; i++) {
+      const frac = Math.max(0, Math.min(1, done - i))
+      if (frac <= 0) break
+      const sh = list[i]
+      // 用虛線長度畫出「寫到一半」的筆畫,曲線本身維持原樣
+      c.setLineDash([sh.len * frac, sh.len])
+      c.stroke(sh.path)
+      c.setLineDash([])
+      // 起筆處點一個圈,標示這一筆從哪開始
+      if (frac < 1 && sh.start) {
+        c.beginPath()
+        c.arc(sh.start.x, sh.start.y, VIEW * 0.03, 0, Math.PI * 2)
+        c.fillStyle = guideColor()
+        c.fill()
+      }
     }
-    ctx.beginPath()
-    tracePath(drawn)
-    ctx.stroke()
-    // 起筆處點一個圈,標示這一筆從哪開始
-    if (frac < 1) {
-      ctx.beginPath()
-      ctx.arc(mapX(pts[0][0]), mapY(pts[0][1]), cssSize * 0.028, 0, Math.PI * 2)
-      ctx.fillStyle = accentColor()
-      ctx.fill()
-    }
-  }
-  ctx.restore()
+  })
 }
 
 function redraw() {
@@ -156,12 +180,12 @@ function redraw() {
   if (live) drawStroke(live)
 }
 
-// 播放筆順示範:每一筆約 0.5 秒
+// 播放筆順示範:每一筆約 0.6 秒
 function playDemo() {
   cancelAnimationFrame(demoRaf)
-  const total = demoStrokes.value.length
+  const total = shapes.value.length
   if (total === 0) return
-  const dur = total * 520
+  const dur = total * 600
   const t0 = performance.now()
   const step = (now: number) => {
     const t = Math.min(1, (now - t0) / dur)
@@ -178,6 +202,7 @@ function stopDemo() {
   redraw()
 }
 
+// === 手寫 ===
 function toPoint(e: PointerEvent): Point {
   const rect = canvasEl.value!.getBoundingClientRect()
   return {
@@ -296,7 +321,6 @@ defineExpose({ clear, undo, hasInk, getStrokes: () => strokes.value, playDemo, s
   stroke-dasharray: 3 3;
 }
 .guide-char {
-  /* 教科書體風格;離線或字型沒載到就退回系統日文字型 */
   font-family: 'Klee One', 'Hiragino Maru Gothic ProN', 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif;
   font-size: 74px;
   font-weight: 400;
