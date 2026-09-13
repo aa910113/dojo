@@ -8,7 +8,11 @@ import STROKE_DATA from '~/data/kana-strokes.json'
 export type Pt = [number, number]
 export interface RawPoint { x: number; y: number }
 
-const REF = STROKE_DATA as unknown as Record<string, Pt[][]>
+// 資料同時存了顯示用的原始曲線 (p) 與辨識用的取樣點 (s),這裡只要後者
+const REF: Record<string, Pt[][]> = Object.fromEntries(
+  Object.entries(STROKE_DATA as unknown as Record<string, { s: Pt[][] }>)
+    .map(([ch, v]) => [ch, v.s]),
+)
 const N = 16               // 每筆重新取樣的點數
 // 絕對門檻:光看排名不夠 —— 數字、直線這類根本不是假名的東西,
 // 在 46 個候選裡總會有一個「最接近」。門檻由模擬資料訂出:
