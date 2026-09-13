@@ -63,18 +63,29 @@ function resize() {
   redraw()
 }
 
+// 取樣點少的時候直線連接會出現稜角,改成通過相鄰中點的二次曲線
+function tracePath(pts: Array<[number, number]>) {
+  if (!ctx || pts.length === 0) return
+  ctx.moveTo(pts[0][0], pts[0][1])
+  if (pts.length === 1) {
+    ctx.lineTo(pts[0][0] + 0.01, pts[0][1])
+    return
+  }
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mx = (pts[i][0] + pts[i + 1][0]) / 2
+    const my = (pts[i][1] + pts[i + 1][1]) / 2
+    ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my)
+  }
+  const last = pts[pts.length - 1]
+  ctx.lineTo(last[0], last[1])
+}
+
 function drawStroke(s: Stroke) {
   if (!ctx || s.length === 0) return
   ctx.strokeStyle = inkColor()
-  ctx.lineWidth = cssSize * 0.045
+  ctx.lineWidth = cssSize * 0.032
   ctx.beginPath()
-  ctx.moveTo(s[0].x * cssSize, s[0].y * cssSize)
-  if (s.length === 1) {
-    ctx.lineTo(s[0].x * cssSize + 0.01, s[0].y * cssSize)
-  }
-  for (let i = 1; i < s.length; i++) {
-    ctx.lineTo(s[i].x * cssSize, s[i].y * cssSize)
-  }
+  tracePath(s.map((p) => [p.x * cssSize, p.y * cssSize]))
   ctx.stroke()
 }
 
@@ -87,11 +98,10 @@ function drawGuide() {
   ctx.save()
   ctx.strokeStyle = accentColor()
   ctx.globalAlpha = 0.3
-  ctx.lineWidth = cssSize * 0.05
+  ctx.lineWidth = cssSize * 0.04
   for (const pts of list) {
     ctx.beginPath()
-    ctx.moveTo(mapX(pts[0][0]), mapY(pts[0][1]))
-    for (let k = 1; k < pts.length; k++) ctx.lineTo(mapX(pts[k][0]), mapY(pts[k][1]))
+    tracePath(pts.map(([x, y]) => [mapX(x), mapY(y)]))
     ctx.stroke()
   }
   ctx.restore()
@@ -107,15 +117,24 @@ function drawDemo() {
   ctx.save()
   ctx.strokeStyle = accentColor()
   ctx.globalAlpha = 0.75
-  ctx.lineWidth = cssSize * 0.05
+  ctx.lineWidth = cssSize * 0.04
   for (let i = 0; i < total; i++) {
     const frac = Math.max(0, Math.min(1, done - i))
     if (frac <= 0) break
     const pts = list[i]
-    const upto = 1 + Math.floor(frac * (pts.length - 1))
+    // 連續推進:整數點之外再補上最後一段的內插,動畫才不會一格一格跳
+    const exact = frac * (pts.length - 1)
+    const whole = Math.floor(exact)
+    const partial = exact - whole
+    const drawn: Array<[number, number]> = []
+    for (let k = 0; k <= whole && k < pts.length; k++) drawn.push([mapX(pts[k][0]), mapY(pts[k][1])])
+    if (partial > 0 && whole + 1 < pts.length) {
+      const a = pts[whole]
+      const b = pts[whole + 1]
+      drawn.push([mapX(a[0] + (b[0] - a[0]) * partial), mapY(a[1] + (b[1] - a[1]) * partial)])
+    }
     ctx.beginPath()
-    ctx.moveTo(mapX(pts[0][0]), mapY(pts[0][1]))
-    for (let k = 1; k < upto; k++) ctx.lineTo(mapX(pts[k][0]), mapY(pts[k][1]))
+    tracePath(drawn)
     ctx.stroke()
     // 起筆處點一個圈,標示這一筆從哪開始
     if (frac < 1) {
