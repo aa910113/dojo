@@ -187,6 +187,11 @@ export interface RecognizeResult {
   gotStrokes?: number
 }
 
+// 這個字標準有幾畫。寫滿就代表寫完了,可以自動判定
+export function strokeCountOf(char: string): number {
+  return REF[char]?.length ?? 0
+}
+
 export function recognizeKana(
   rawStrokes: RawPoint[][],
   target: string,

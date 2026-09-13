@@ -10,6 +10,9 @@ const props = withDefaults(defineProps<{
   showGuide?: boolean
 }>(), { showGuide: true })
 
+// 每次筆畫數改變都通知外層,讓它決定要不要自動判定
+const emit = defineEmits<{ strokesChanged: [count: number] }>()
+
 type Point = { x: number; y: number }
 type Stroke = Point[]
 interface CharData { p: string[]; s: number[][][] }
@@ -234,17 +237,20 @@ function onUp(e: PointerEvent) {
   strokes.value = [...strokes.value, live]
   live = null
   redraw()
+  emit('strokesChanged', strokes.value.length)
 }
 
 function clear() {
   strokes.value = []
   live = null
   redraw()
+  emit('strokesChanged', 0)
 }
 
 function undo() {
   strokes.value = strokes.value.slice(0, -1)
   redraw()
+  emit('strokesChanged', strokes.value.length)
 }
 
 watch(() => props.char, () => { stopDemo(); clear() })
