@@ -96,7 +96,7 @@ function focusHintedNext() {
 // 手寫回合:辨識是客觀判定,所以和打字一樣計入間隔重複
 function onFocusStrokes(count: number) {
   if (focusRevealed.value || focusHinted.value || !current.value) return
-  scheduleAutoJudge(count, current.value.char, focusWriteReveal)
+  scheduleAutoJudge(count, current.value, () => focusBoard.value?.getStrokes() ?? [], focusWriteReveal)
 }
 
 function focusWriteReveal() {
@@ -407,10 +407,10 @@ function finishTrace() {
 }
 
 // 寫滿該字的筆畫數就自動判定;超過也判(一定是錯的)。
-// 留 700ms 是為了讓不小心斷筆或多寫的人來得及按「上一筆」
+// 寫對的話沒有什麼要補救的,直接判;只有不對時才留 700ms 讓人按「上一筆」
 const AUTO_JUDGE_DELAY = 700
-// 判定完停一下再進下一題:寫對沒什麼好看的,寫錯要留時間對照正確字形
-const AUTO_NEXT_OK = 1300
+// 判定完再進下一題:寫對只留一瞬間讓人看到打勾,寫錯要留時間對照正確字形
+const AUTO_NEXT_OK = 400
 const AUTO_NEXT_WRONG = 3000
 let autoNextTimer: number | null = null
 function cancelAutoNext() {
@@ -434,10 +434,20 @@ function cancelAutoJudge() {
     autoJudgeTimer = null
   }
 }
-function scheduleAutoJudge(count: number, char: string, judge: () => void) {
+function scheduleAutoJudge(
+  count: number,
+  card: KanaEntry,
+  getStrokes: () => { x: number; y: number }[][],
+  judge: () => void,
+) {
   cancelAutoJudge()
   if (count === 0) return
-  if (count < strokeCountOf(char)) return
+  if (count < strokeCountOf(card.char)) return
+  // 先試算一次:寫對了就沒有東西要補救,直接判
+  if (recognizeKana(getStrokes(), card.char, card.script).ok) {
+    judge()
+    return
+  }
   autoJudgeTimer = window.setTimeout(() => {
     autoJudgeTimer = null
     judge()
@@ -446,7 +456,7 @@ function scheduleAutoJudge(count: number, char: string, judge: () => void) {
 
 function onWriteStrokes(count: number) {
   if (writeRevealed.value || !traceCard.value) return
-  scheduleAutoJudge(count, traceCard.value.char, writeReveal)
+  scheduleAutoJudge(count, traceCard.value, () => traceBoard.value?.getStrokes() ?? [], writeReveal)
 }
 
 function writeReveal() {
