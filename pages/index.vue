@@ -62,6 +62,7 @@ function next_focus_card_or_finish() {
   focusOverride.value = null
   focusHinted.value = false
   cancelAutoJudge()
+  cancelAutoNext()
   focusBoard.value?.stopDemo()
   focusBoard.value?.clear()
   if (focusRound.value === 'type') {
@@ -77,6 +78,7 @@ function next_focus_card_or_finish() {
 // 看寫法:播一次筆順示範,不記分
 function focusShowStrokes() {
   cancelAutoJudge()
+  cancelAutoNext()
   sfx('ka')
   focusHinted.value = true
   if (settings.value.autoPlaySound && current.value) speakKana(current.value.char)
@@ -107,10 +109,17 @@ function focusWriteReveal() {
   const ok = focusVerdict.value.ok
   feedback.value = ok ? 'good' : 'bad'
   sfx(ok ? 'don' : 'fail')
+  scheduleAutoNext(ok, focusWriteNext)
+}
+
+function focusToggleOverride() {
+  cancelAutoNext()
+  focusOverride.value = !focusOk.value
 }
 
 function focusWriteNext() {
   cancelAutoJudge()
+  cancelAutoNext()
   const card = current.value
   if (!card) return
   const ok = focusOk.value
@@ -146,6 +155,8 @@ function startFocus() {
 }
 
 function finishFocus() {
+  cancelAutoJudge()
+  cancelAutoNext()
   endFocusSession()
   focusFinished.value = false
   sessionStarted.value = false
@@ -382,6 +393,7 @@ function startTrace() {
 
 function finishTrace() {
   cancelAutoJudge()
+  cancelAutoNext()
   writeQueue.value = []
   writeTotal.value = 0
   writeCorrectIds.value = []
@@ -397,6 +409,24 @@ function finishTrace() {
 // 寫滿該字的筆畫數就自動判定;超過也判(一定是錯的)。
 // 留 700ms 是為了讓不小心斷筆或多寫的人來得及按「上一筆」
 const AUTO_JUDGE_DELAY = 700
+// 判定完停一下再進下一題:寫對沒什麼好看的,寫錯要留時間對照正確字形
+const AUTO_NEXT_OK = 1300
+const AUTO_NEXT_WRONG = 3000
+let autoNextTimer: number | null = null
+function cancelAutoNext() {
+  if (autoNextTimer != null) {
+    clearTimeout(autoNextTimer)
+    autoNextTimer = null
+  }
+}
+// 使用者想改判或看筆順時就不要自動跳,讓他慢慢看
+function scheduleAutoNext(ok: boolean, go: () => void) {
+  cancelAutoNext()
+  autoNextTimer = window.setTimeout(() => {
+    autoNextTimer = null
+    go()
+  }, ok ? AUTO_NEXT_OK : AUTO_NEXT_WRONG)
+}
 let autoJudgeTimer: number | null = null
 function cancelAutoJudge() {
   if (autoJudgeTimer != null) {
@@ -428,12 +458,23 @@ function writeReveal() {
   writeOverride.value = null
   writeRevealed.value = true
   sfx(writeVerdict.value.ok ? 'don' : 'fail')
+  scheduleAutoNext(writeVerdict.value.ok, writeNext)
+}
+
+function writeStay() {
+  cancelAutoNext()
+}
+
+function writeToggleOverride() {
+  cancelAutoNext()
+  writeOverride.value = !writeOk.value
 }
 
 // 成績只記在這場測驗裡,不寫進 SRS —— 手寫是另一種能力,
 // 混進打字的準確率會影響重點練習選卡
 function writeNext() {
   cancelAutoJudge()
+  cancelAutoNext()
   const card = traceCard.value
   if (!card) return
   const ok = writeOk.value
@@ -1685,7 +1726,7 @@ const examCountdown = computed(() => {
             <button
               v-if="writeRevealed"
               class="btn-ghost arcade small"
-              @click="traceBoard?.playDemo()"
+              @click="writeStay(); traceBoard?.playDemo()"
             >看筆順</button>
           </div>
 
@@ -1699,7 +1740,7 @@ const examCountdown = computed(() => {
               </button>
             </div>
             <div class="trace-tools">
-              <button class="btn-ghost arcade small" @click="writeOverride = !writeOk">
+              <button class="btn-ghost arcade small" @click="writeToggleOverride">
                 {{ writeOk ? '改判為沒寫對' : '改判為寫對了' }}
               </button>
             </div>
@@ -1948,12 +1989,12 @@ const examCountdown = computed(() => {
               <button
                 v-if="focusHinted || focusRevealed"
                 class="btn-ghost arcade small"
-                @click="focusBoard?.playDemo()"
+                @click="cancelAutoNext(); focusBoard?.playDemo()"
               >再看一次筆順</button>
               <button
                 v-if="focusRevealed"
                 class="btn-ghost arcade small"
-                @click="focusOverride = !focusOk"
+                @click="focusToggleOverride"
               >{{ focusOk ? '改判為沒寫對' : '改判為寫對了' }}</button>
             </div>
 
