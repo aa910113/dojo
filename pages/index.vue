@@ -61,6 +61,7 @@ function next_focus_card_or_finish() {
   focusVerdict.value = null
   focusOverride.value = null
   focusHinted.value = false
+  cancelAutoJudge()
   focusBoard.value?.stopDemo()
   focusBoard.value?.clear()
   if (focusRound.value === 'type') {
@@ -75,6 +76,7 @@ function next_focus_card_or_finish() {
 
 // 看寫法:播一次筆順示範,不記分
 function focusShowStrokes() {
+  cancelAutoJudge()
   sfx('ka')
   focusHinted.value = true
   if (settings.value.autoPlaySound && current.value) speakKana(current.value.char)
@@ -90,7 +92,13 @@ function focusHintedNext() {
 }
 
 // 手寫回合:辨識是客觀判定,所以和打字一樣計入間隔重複
+function onFocusStrokes(count: number) {
+  if (focusRevealed.value || focusHinted.value || !current.value) return
+  scheduleAutoJudge(count, current.value.char, focusWriteReveal)
+}
+
 function focusWriteReveal() {
+  cancelAutoJudge()
   const card = current.value
   if (!card) return
   focusVerdict.value = recognizeKana(focusBoard.value?.getStrokes() ?? [], card.char, card.script)
@@ -102,6 +110,7 @@ function focusWriteReveal() {
 }
 
 function focusWriteNext() {
+  cancelAutoJudge()
   const card = current.value
   if (!card) return
   const ok = focusOk.value
@@ -372,6 +381,7 @@ function startTrace() {
 }
 
 function finishTrace() {
+  cancelAutoJudge()
   writeQueue.value = []
   writeTotal.value = 0
   writeCorrectIds.value = []
@@ -384,7 +394,33 @@ function finishTrace() {
   sessionStarted.value = false
 }
 
+// 寫滿該字的筆畫數就自動判定;超過也判(一定是錯的)。
+// 留 700ms 是為了讓不小心斷筆或多寫的人來得及按「上一筆」
+const AUTO_JUDGE_DELAY = 700
+let autoJudgeTimer: number | null = null
+function cancelAutoJudge() {
+  if (autoJudgeTimer != null) {
+    clearTimeout(autoJudgeTimer)
+    autoJudgeTimer = null
+  }
+}
+function scheduleAutoJudge(count: number, char: string, judge: () => void) {
+  cancelAutoJudge()
+  if (count === 0) return
+  if (count < strokeCountOf(char)) return
+  autoJudgeTimer = window.setTimeout(() => {
+    autoJudgeTimer = null
+    judge()
+  }, AUTO_JUDGE_DELAY)
+}
+
+function onWriteStrokes(count: number) {
+  if (writeRevealed.value || !traceCard.value) return
+  scheduleAutoJudge(count, traceCard.value.char, writeReveal)
+}
+
 function writeReveal() {
+  cancelAutoJudge()
   const card = traceCard.value
   if (!card) return
   const strokes = traceBoard.value?.getStrokes() ?? []
@@ -397,6 +433,7 @@ function writeReveal() {
 // 成績只記在這場測驗裡,不寫進 SRS —— 手寫是另一種能力,
 // 混進打字的準確率會影響重點練習選卡
 function writeNext() {
+  cancelAutoJudge()
   const card = traceCard.value
   if (!card) return
   const ok = writeOk.value
@@ -1627,13 +1664,20 @@ const examCountdown = computed(() => {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
             </button>
           </div>
-          <p v-if="!writeRevealed" class="trace-prompt">寫出這個音的假名</p>
+          <p v-if="!writeRevealed" class="trace-prompt">
+            寫出這個音的假名 · 共 {{ strokeCountOf(traceCard.char) }} 畫,寫完自動判定
+          </p>
           <div v-else class="verdict" :class="writeOk ? 'good' : 'bad'">
             <span class="verdict-mark disp">{{ writeOk ? '✓' : '✗' }}</span>
             <span>{{ writeOverride === null ? writeVerdictText : (writeOk ? '已改判為寫對' : '已改判為沒寫對') }}</span>
           </div>
 
-          <TraceBoard ref="traceBoard" :char="traceCard.char" :show-guide="writeRevealed" />
+          <TraceBoard
+            ref="traceBoard"
+            :char="traceCard.char"
+            :show-guide="writeRevealed"
+            @strokes-changed="onWriteStrokes"
+          />
 
           <div class="trace-tools">
             <button class="btn-ghost arcade small" @click="traceBoard?.undo()">上一筆</button>
@@ -1646,7 +1690,7 @@ const examCountdown = computed(() => {
           </div>
 
           <div v-if="!writeRevealed" class="trace-nav">
-            <button class="primary big disp" @click="writeReveal">對答案</button>
+            <button class="btn-ghost arcade big disp" @click="writeReveal">寫不出來 · 看答案</button>
           </div>
           <template v-else>
             <div class="trace-nav">
@@ -1885,10 +1929,17 @@ const examCountdown = computed(() => {
               <span>{{ focusOverride === null ? focusVerdictText : (focusOk ? '已改判為寫對' : '已改判為沒寫對') }}</span>
             </div>
             <p v-else-if="focusHinted" class="trace-prompt">照著筆順描一次,這題不記分</p>
-            <p v-else class="trace-prompt">寫出這個音的假名</p>
+            <p v-else class="trace-prompt">
+              寫出這個音的假名 · 共 {{ strokeCountOf(current.char) }} 畫,寫完自動判定
+            </p>
 
             <div class="focus-board">
-              <TraceBoard ref="focusBoard" :char="current.char" :show-guide="focusRevealed || focusHinted" />
+              <TraceBoard
+                ref="focusBoard"
+                :char="current.char"
+                :show-guide="focusRevealed || focusHinted"
+                @strokes-changed="onFocusStrokes"
+              />
             </div>
 
             <div class="trace-tools">
@@ -1915,7 +1966,7 @@ const examCountdown = computed(() => {
               </template>
               <template v-else>
                 <button class="btn-ghost arcade big disp" @click="focusShowStrokes">不會(看寫法)</button>
-                <button class="primary big disp" @click="focusWriteReveal">對答案</button>
+                <button class="btn-ghost arcade big disp" @click="focusWriteReveal">直接對答案</button>
               </template>
             </div>
             <p v-if="focusHinted && !focusRevealed" class="hint-row">
