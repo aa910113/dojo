@@ -2050,7 +2050,13 @@ const examCountdown = computed(() => {
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
-  padding: 24px 20px 60px;
+  /* viewport-fit=cover 讓畫面鋪到瀏海與 home indicator 底下,
+     內容要自己讓開這些區域;背景帶仍然鋪滿(它是絕對定位在 padding box 外緣) */
+  padding:
+    calc(24px + env(safe-area-inset-top, 0px))
+    calc(20px + env(safe-area-inset-right, 0px))
+    calc(60px + env(safe-area-inset-bottom, 0px))
+    calc(20px + env(safe-area-inset-left, 0px));
 }
 .disp {
   font-family: var(--font-display);
@@ -2065,7 +2071,11 @@ const examCountdown = computed(() => {
   inset: 0;
   height: var(--vvh, 100%);
   overflow-y: auto;
-  padding: 6px 14px 10px;
+  padding:
+    calc(6px + env(safe-area-inset-top, 0px))
+    calc(14px + env(safe-area-inset-right, 0px))
+    calc(10px + env(safe-area-inset-bottom, 0px))
+    calc(14px + env(safe-area-inset-left, 0px));
 }
 .page.in-session.kb-open .topbar { display: none; }
 .page.in-session.kb-open .panel.session {
@@ -2115,7 +2125,7 @@ const examCountdown = computed(() => {
   left: 50%;
   width: 100vw;
   margin-left: -50vw;
-  height: 444px;
+  height: calc(444px + env(safe-area-inset-top, 0px));
   background-color: var(--accent);
   background-image:
     linear-gradient(45deg, var(--accent-check) 25%, transparent 25%, transparent 75%, var(--accent-check) 75%),
@@ -2130,7 +2140,7 @@ const examCountdown = computed(() => {
   will-change: background-position;
 }
 /* 背景音樂關閉時沒有曲名標籤,頭帶跟著縮短 */
-.page.no-track .ichimatsu-band { height: 404px; }
+.page.no-track .ichimatsu-band { height: calc(404px + env(safe-area-inset-top, 0px)); }
 @keyframes ichimatsu-scroll {
   from { background-position: 0 0, 14px 14px; }
   to { background-position: 28px 28px, 42px 42px; }
