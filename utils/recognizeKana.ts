@@ -22,6 +22,11 @@ const ORDER_MAX = 0.18     // 筆順不同但形狀算對的上限
 const STRAIGHT_MAX = 0.35
 // 正規化後的外框比例:細長的「1」和較寬的「く」差很多,靠這個擋掉
 const BOX_MAX = 0.32
+// 距離在這個值以內算「對得很好」,不再多問;超過才加驗筆畫的彎度,
+// 因為正確書寫幾乎都落在 0.10 以內,而數字 1 對上「く」是 0.12
+const CONFIDENT_DIST = 0.10
+// 中段偏離起訖連線的幅度比標準少這麼多 → 寫得太直
+const BULGE_MAX = 0.15
 
 // 依弧長重新取樣成 N 點
 function resample(pts: Pt[], n = N): Pt[] {
@@ -106,6 +111,29 @@ function extents(strokes: Pt[][]): [number, number] {
   const xs = all.map((p) => p[0])
   const ys = all.map((p) => p[1])
   return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]
+}
+
+// 一筆中段偏離「起點到終點連線」的最大距離。頭尾各略過兩點,
+// 這樣起筆的小勾(例如數字 1 的頭)不會被當成彎曲
+function bulge(st: Pt[]): number {
+  const a = st[0]
+  const b = st[st.length - 1]
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  const len = Math.hypot(dx, dy) || 1e-6
+  let worst = 0
+  for (let i = 2; i < st.length - 2; i++) {
+    const d = Math.abs((st[i][0] - a[0]) * dy - (st[i][1] - a[1]) * dx) / len
+    if (d > worst) worst = d
+  }
+  return worst
+}
+
+// 比標準少彎多少(只看寫太直)
+function bulgeDeficit(user: Pt[][], ref: Pt[][]): number {
+  let worst = -Infinity
+  for (let i = 0; i < ref.length; i++) worst = Math.max(worst, bulge(ref[i]) - bulge(user[i]))
+  return worst
 }
 
 // 「比標準直多少」的最大值。只看寫太直,不管寫太彎
@@ -197,6 +225,10 @@ export function recognizeKana(
   const [rw, rh] = extents(ref)
   if (Math.abs(uw - rw) > BOX_MAX || Math.abs(uh - rh) > BOX_MAX) {
     return { ok: false, reason: 'shape', ...diag }
+  }
+  // 對得不夠好的時候,再看筆畫是不是該彎卻寫得太直
+  if (bestDist > CONFIDENT_DIST && bulgeDeficit(user, ref) > BULGE_MAX) {
+    return { ok: false, reason: 'straight', ...diag }
   }
 
   if (bestChar === target) return { ok: true, reason: 'ok', ...diag }
