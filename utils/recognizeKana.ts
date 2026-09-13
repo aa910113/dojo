@@ -13,8 +13,20 @@ const N = 16               // 每筆重新取樣的點數
 // 絕對門檻:光看排名不夠 —— 數字、直線這類根本不是假名的東西,
 // 在 46 個候選裡總會有一個「最接近」。門檻由模擬資料訂出:
 // 正常書寫的距離中位數約 0.03-0.05,而各種塗鴉最近也要 0.086 以上。
-const MAX_DIST = 0.08      // 超過就當作沒寫對/認不出來
-const ORDER_MAX = 0.09     // 筆順不同但形狀算對的上限
+// 門檻由模擬「真人差異」訂出:每一筆各自縮放位移、整體長寬比與傾斜改變、
+// 端點漂移,再加上手抖。這類變形下正確書寫的距離幾乎都在 0.16 以內。
+const MAX_DIST = 0.16      // 超過就當作沒寫對/認不出來
+const ORDER_MAX = 0.18     // 筆順不同但形狀算對的上限
+// 只靠距離擋不掉直線類塗鴉(數字 1、兩條豎線),因為它們和較直的假名距離很近。
+// 改用單向的彎曲度否決:該彎的筆畫寫成直線就退回,但寫得比標準更彎(手抖)不罰。
+const STRAIGHT_MAX = 0.35
+// 正規化後的外框比例:細長的「1」和較寬的「く」差很多,靠這個擋掉
+const BOX_MAX = 0.32
+// 距離在這個值以內算「對得很好」,不再多問;超過才加驗筆畫的彎度,
+// 因為正確書寫幾乎都落在 0.10 以內,而數字 1 對上「く」是 0.12
+const CONFIDENT_DIST = 0.10
+// 中段偏離起訖連線的幅度比標準少這麼多 → 寫得太直
+const BULGE_MAX = 0.15
 
 // 依弧長重新取樣成 N 點
 function resample(pts: Pt[], n = N): Pt[] {
@@ -59,10 +71,76 @@ function normalize(strokes: Pt[][]): Pt[][] {
   return strokes.map((st) => st.map(([x, y]) => [(x - minX) * scale + ox, (y - minY) * scale + oy] as Pt))
 }
 
-function strokeDist(a: Pt[], b: Pt[]): number {
-  let sum = 0
-  for (let i = 0; i < a.length; i++) sum += Math.hypot(a[i][0] - b[i][0], a[i][1] - b[i][1])
-  return sum / a.length
+// 彈性比對 (DTW):逐點硬對齊會因為「哪一段寫得長一點」就判失敗,
+// 允許局部伸縮才容得下真人的比例差異。band 限制避免退化成亂配。
+function strokeDist(a: Pt[], b: Pt[], band = 3): number {
+  const n = a.length, m = b.length
+  const INF = Number.POSITIVE_INFINITY
+  let prev = new Array<number>(m + 1).fill(INF)
+  let cur = new Array<number>(m + 1).fill(INF)
+  prev[0] = 0
+  for (let i = 1; i <= n; i++) {
+    cur.fill(INF)
+    const lo = Math.max(1, i - band)
+    const hi = Math.min(m, i + band)
+    for (let j = lo; j <= hi; j++) {
+      const c = Math.hypot(a[i - 1][0] - b[j - 1][0], a[i - 1][1] - b[j - 1][1])
+      cur[j] = c + Math.min(prev[j], cur[j - 1], prev[j - 1])
+    }
+    const t = prev; prev = cur; cur = t
+  }
+  return prev[m] / Math.max(n, m)
+}
+
+// 一筆的總轉彎量(以 π 為單位):直線接近 0,有彎的筆畫明顯較大
+function turning(st: Pt[]): number {
+  let total = 0
+  for (let i = 2; i < st.length; i++) {
+    const a = Math.atan2(st[i - 1][1] - st[i - 2][1], st[i - 1][0] - st[i - 2][0])
+    const b = Math.atan2(st[i][1] - st[i - 1][1], st[i][0] - st[i - 1][0])
+    let d = b - a
+    d = Math.atan2(Math.sin(d), Math.cos(d))
+    total += Math.abs(d)
+  }
+  return total / Math.PI
+}
+
+// 正規化後佔的長寬(其中較長的一邊會是 1)
+function extents(strokes: Pt[][]): [number, number] {
+  const all = strokes.flat()
+  const xs = all.map((p) => p[0])
+  const ys = all.map((p) => p[1])
+  return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]
+}
+
+// 一筆中段偏離「起點到終點連線」的最大距離。頭尾各略過兩點,
+// 這樣起筆的小勾(例如數字 1 的頭)不會被當成彎曲
+function bulge(st: Pt[]): number {
+  const a = st[0]
+  const b = st[st.length - 1]
+  const dx = b[0] - a[0]
+  const dy = b[1] - a[1]
+  const len = Math.hypot(dx, dy) || 1e-6
+  let worst = 0
+  for (let i = 2; i < st.length - 2; i++) {
+    const d = Math.abs((st[i][0] - a[0]) * dy - (st[i][1] - a[1]) * dx) / len
+    if (d > worst) worst = d
+  }
+  return worst
+}
+
+// 比標準少彎多少(只看寫太直)
+function bulgeDeficit(user: Pt[][], ref: Pt[][]): number {
+  let worst = -Infinity
+  for (let i = 0; i < ref.length; i++) worst = Math.max(worst, bulge(ref[i]) - bulge(user[i]))
+  return worst
+}
+
+// 「比標準直多少」的最大值。只看寫太直,不管寫太彎
+function straightness(user: Pt[][], ref: Pt[][]): number {
+  let worst = -Infinity
+  for (let i = 0; i < ref.length; i++) worst = Math.max(worst, turning(ref[i]) - turning(user[i]))
+  return worst
 }
 
 // 依筆順逐筆比對
@@ -96,8 +174,10 @@ export interface RecognizeResult {
   bestDist?: number
   bestChar?: string
   // 'ok' 認出目標字 | 'order' 形狀對但筆順不同 | 'strokes' 筆畫數不對
-  // 'confused' 比較像別的字 | 'unknown' 認不出來 | 'empty' 沒有筆跡
-  reason: 'ok' | 'order' | 'strokes' | 'confused' | 'unknown' | 'empty'
+  // 'straight' 該彎的筆畫寫成直線 | 'shape' 整體比例差太多
+  // 'confused' 比較像別的字
+  // 'unknown' 認不出來 | 'empty' 沒有筆跡
+  reason: 'ok' | 'order' | 'strokes' | 'straight' | 'shape' | 'confused' | 'unknown' | 'empty'
   confusedWith?: string
   expectedStrokes?: number
   gotStrokes?: number
@@ -138,6 +218,18 @@ export function recognizeKana(
 
   // 先過絕對門檻:連最接近的候選都差太多 → 這根本不是假名
   if (bestDist > MAX_DIST) return { ok: false, reason: 'unknown', ...diag }
+  // 再擋直線類塗鴉:該彎的筆畫被寫成直線
+  if (straightness(user, ref) > STRAIGHT_MAX) return { ok: false, reason: 'straight', ...diag }
+  // 外框比例差太多(例如細長的數字 1 對上較寬的假名)
+  const [uw, uh] = extents(user)
+  const [rw, rh] = extents(ref)
+  if (Math.abs(uw - rw) > BOX_MAX || Math.abs(uh - rh) > BOX_MAX) {
+    return { ok: false, reason: 'shape', ...diag }
+  }
+  // 對得不夠好的時候,再看筆畫是不是該彎卻寫得太直
+  if (bestDist > CONFIDENT_DIST && bulgeDeficit(user, ref) > BULGE_MAX) {
+    return { ok: false, reason: 'straight', ...diag }
+  }
 
   if (bestChar === target) return { ok: true, reason: 'ok', ...diag }
 
